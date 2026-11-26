@@ -207,17 +207,17 @@
 
 .survey-match {
   display: grid;
-  grid-template-columns: minmax(12.5rem, .34fr) minmax(0, 1fr);
+  grid-template-columns: minmax(12.5rem, .28fr) minmax(0, 1fr);
   align-items: start;
-  gap: clamp(1rem, 2.4vw, 2.4rem);
-  padding-block: clamp(1rem, 2.45vw, 2.45rem) 2.2rem;
+  gap: clamp(1rem, 2vw, 2rem);
+  padding-block: clamp(.9rem, 1.65vw, 1.75rem) 2.2rem;
 }
 
 .survey-sidebar {
   min-width: 0;
   display: grid;
-  gap: .65rem;
-  margin-top: .38rem;
+  gap: .5rem;
+  margin-top: .25rem;
 }
 
 .survey-team-card {
@@ -225,7 +225,7 @@
   background: var(--team-card);
   border: 2px solid var(--survey-ink);
   border-radius: .95rem;
-  padding: clamp(.6rem, 1.15vw, 1.18rem);
+  padding: clamp(.5rem, .85vw, .9rem);
 }
 
 .survey-team-head {
@@ -233,18 +233,18 @@
   align-items: start;
   justify-content: space-between;
   gap: .5rem;
-  margin-bottom: .9rem;
+  margin-bottom: .55rem;
 }
 
 .survey-team-label {
   display: block;
   font-weight: 680;
-  font-size: clamp(.8rem, 1.15vw, 1.02rem);
+  font-size: clamp(.8rem, 1vw, .94rem);
 }
 
 .survey-team-head h2 {
   margin-top: .12rem;
-  font-size: clamp(1.1rem, 2.2vw, 2.2rem);
+  font-size: clamp(1.08rem, 1.8vw, 1.9rem);
   font-weight: 800;
   line-height: 1.1;
   letter-spacing: -.04em;
@@ -258,7 +258,7 @@
   border: 2px solid var(--survey-ink);
   border-radius: .27em;
   background: var(--survey-paper);
-  font-size: clamp(1.45rem, 3vw, 3.25rem);
+  font-size: clamp(1.38rem, 2.5vw, 2.7rem);
   font-weight: 800;
   text-align: center;
   line-height: 1.25;
@@ -267,16 +267,16 @@
 
 .survey-roster {
   display: grid;
-  gap: .22rem;
+  gap: .15rem;
 }
 
 .survey-member {
   display: flex;
   align-items: center;
-  gap: clamp(.35rem, .9vw, .75rem);
+  gap: clamp(.36rem, .65vw, .65rem);
   width: 100%;
-  min-height: clamp(2.4rem, 3.3vw, 3.35rem);
-  padding: .24rem .4rem;
+  min-height: clamp(2.25rem, 2.7vw, 2.85rem);
+  padding: .18rem .35rem;
   border-radius: .65rem;
   background: none;
   text-align: left;
@@ -292,12 +292,12 @@ button.survey-member:hover { background: color-mix(in srgb, var(--survey-paper) 
   display: grid;
   place-items: center;
   flex: none;
-  width: clamp(1.75rem, 2.6vw, 2.65rem);
+  width: clamp(1.55rem, 2vw, 2.15rem);
   aspect-ratio: 1;
   border-radius: 50%;
   background: #c64125;
   color: #fff9ed;
-  font-size: clamp(.875rem, 1.25vw, 1.15rem);
+  font-size: clamp(.82rem, 1.1vw, 1rem);
   font-weight: 760;
 }
 
@@ -308,7 +308,7 @@ button.survey-member:hover { background: color-mix(in srgb, var(--survey-paper) 
 .survey-member-name {
   min-width: 0;
   font-weight: 710;
-  font-size: clamp(.92rem, 1.45vw, 1.38rem);
+  font-size: clamp(.9rem, 1.2vw, 1.17rem);
   line-height: 1.15;
   overflow-wrap: anywhere;
 }
@@ -335,7 +335,7 @@ button.survey-member:hover { background: color-mix(in srgb, var(--survey-paper) 
 
 .survey-rivals {
   display: grid;
-  gap: .65rem;
+  gap: .46rem;
 }
 
 .survey-rival {
@@ -343,11 +343,11 @@ button.survey-member:hover { background: color-mix(in srgb, var(--survey-paper) 
   align-items: center;
   justify-content: space-between;
   gap: .35rem;
-  min-height: 2.85rem;
+  min-height: 2.45rem;
   border: 1.5px solid var(--survey-border);
   border-radius: .85rem;
   background: #f5e8d9;
-  padding: .38rem clamp(.55rem, 1.1vw, 1.2rem);
+  padding: .28rem clamp(.48rem, .8vw, .85rem);
 }
 
 .survey-rival.is-current,
@@ -361,7 +361,7 @@ button.survey-member:hover { background: color-mix(in srgb, var(--survey-paper) 
   gap: .5rem;
   min-width: 0;
   font-weight: 740;
-  font-size: clamp(.875rem, 1.48vw, 1.42rem);
+  font-size: clamp(.875rem, 1.24vw, 1.2rem);
   overflow-wrap: anywhere;
 }
 
@@ -387,7 +387,7 @@ button.survey-member:hover { background: color-mix(in srgb, var(--survey-paper) 
   flex: none;
   min-width: 3ch;
   text-align: right;
-  font-size: clamp(1.1rem, 2vw, 1.85rem);
+  font-size: clamp(1.02rem, 1.65vw, 1.55rem);
   font-variant-numeric: tabular-nums;
   line-height: 1.2;
 }
@@ -531,7 +531,7 @@ button.survey-member:hover { background: color-mix(in srgb, var(--survey-paper) 
 .survey-question {
   display: grid;
   justify-items: center;
-  padding-bottom: clamp(.8rem, 2vw, 1.8rem);
+  padding-bottom: clamp(.65rem, 1.35vw, 1.25rem);
 }
 
 .survey-question-progress {
@@ -541,7 +541,7 @@ button.survey-member:hover { background: color-mix(in srgb, var(--survey-paper) 
   justify-content: center;
   gap: calc(var(--checkpoint-space) - .625rem);
   height: 1.25rem;
-  margin-bottom: .72rem;
+  margin-bottom: .48rem;
   isolation: isolate;
 }
 
@@ -589,8 +589,8 @@ button.survey-member:hover { background: color-mix(in srgb, var(--survey-paper) 
 .survey-question h1 {
   text-align: center;
   text-wrap: balance;
-  max-width: 19em;
-  font: 700 clamp(2rem, 3.7vw, 4.05rem)/1.03 var(--survey-display);
+  max-width: 23em;
+  font: 700 clamp(1.8rem, 3.12vw, 3.45rem)/1.04 var(--survey-display);
   letter-spacing: -.034em;
 }
 
@@ -599,7 +599,7 @@ button.survey-member:hover { background: color-mix(in srgb, var(--survey-paper) 
 .survey-board ol {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: clamp(.42rem, .92vw, .85rem);
+  gap: clamp(.38rem, .8vw, .75rem);
   perspective: inherit;
 }
 
@@ -609,7 +609,7 @@ button.survey-member:hover { background: color-mix(in srgb, var(--survey-paper) 
   justify-items: center;
   text-align: center;
   min-width: 0;
-  min-height: clamp(5.2rem, 9.75vw, 9.85rem);
+  min-height: clamp(4.75rem, 8.15vw, 8.2rem);
   padding: .45rem;
   border: 2px solid var(--survey-ink);
   border-radius: clamp(.6rem, 1.15vw, 1.25rem);
@@ -635,7 +635,7 @@ button.survey-member:hover { background: color-mix(in srgb, var(--survey-paper) 
 }
 
 .survey-rank {
-  font: 820 clamp(2.8rem, 6.4vw, 6.25rem)/.92 "Rubik Variable", sans-serif;
+  font: 820 clamp(2.55rem, 5.4vw, 5.35rem)/.92 "Rubik Variable", sans-serif;
   letter-spacing: -.03em;
 }
 
@@ -662,8 +662,8 @@ button.survey-member:hover { background: color-mix(in srgb, var(--survey-paper) 
 
 .survey-panel {
   display: grid;
-  gap: .62rem;
-  margin-top: clamp(.95rem, 2vw, 1.9rem);
+  gap: .7rem;
+  margin-top: clamp(.95rem, 1.7vw, 1.6rem);
 }
 
 .survey-workhead {
@@ -735,13 +735,17 @@ button.survey-member:hover { background: color-mix(in srgb, var(--survey-paper) 
 
 .survey-ready {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(5rem, .36fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: clamp(.65rem, 1.8vw, 1.5rem);
   padding: clamp(.8rem, 2vw, 1.55rem);
   border: 1.5px solid var(--team);
   background: color-mix(in srgb, var(--team-soft) 63%, var(--survey-paper));
   border-radius: .9rem;
+}
+
+.survey-ready:has(> .survey-timer) {
+  grid-template-columns: minmax(0, 1fr) minmax(5rem, .36fr) auto;
 }
 
 .survey-ready .survey-ready-copy h2 {
@@ -786,12 +790,12 @@ button.survey-member:hover { background: color-mix(in srgb, var(--survey-paper) 
 .survey-form input {
   min-width: 0;
   flex: 1;
-  min-height: 2.85rem;
+  min-height: 3.15rem;
   border: 1.5px solid var(--survey-ink);
   border-radius: .65rem;
   background: var(--survey-paper);
   color: var(--survey-ink);
-  padding: .5rem .8rem;
+  padding: .58rem .85rem;
   font-size: 1rem;
 }
 
@@ -815,7 +819,7 @@ button.survey-member:hover { background: color-mix(in srgb, var(--survey-paper) 
 .survey-proposals {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: .55rem;
+  gap: .62rem;
 }
 
 .survey-proposals > p { grid-column: 1 / -1; }
@@ -825,8 +829,8 @@ button.survey-member:hover { background: color-mix(in srgb, var(--survey-paper) 
   align-items: center;
   gap: clamp(.3rem, .7vw, .65rem);
   min-width: 0;
-  min-height: clamp(2.85rem, 4.55vw, 4.25rem);
-  padding: .38rem .65rem;
+  min-height: clamp(3rem, 4.85vw, 4.6rem);
+  padding: .46rem .7rem;
   border: 1.5px solid var(--survey-ink);
   border-radius: .72rem;
   background: var(--survey-paper);
@@ -898,18 +902,6 @@ button.survey-member:hover { background: color-mix(in srgb, var(--survey-paper) 
 
 .survey-turn-actions .survey-button:hover:not(:disabled) { background: var(--survey-accent-soft); }
 .survey-panel > .survey-button { justify-self: start; }
-
-.survey-feedback {
-  padding: .7rem .85rem;
-  border: 1px solid var(--survey-border);
-  border-left: .22rem solid var(--survey-border);
-  border-radius: .52rem;
-  background: var(--survey-paper);
-  overflow-wrap: anywhere;
-}
-
-.survey-feedback.hit { border-left-color: #168148; }
-.survey-feedback span { display: block; color: var(--survey-muted); font-size: .9375rem; }
 
 .survey-resolution {
   display: grid;
@@ -1016,16 +1008,16 @@ button.survey-member:hover { background: color-mix(in srgb, var(--survey-paper) 
 .survey-error:empty { display: none; }
 
 @media (min-width: 761px) {
-  .survey-panel:has(> .survey-form) {
+  .survey-panel:has(> .survey-form):has(.survey-timer) {
     grid-template-columns: minmax(0, 1fr) minmax(8rem, .34fr);
     column-gap: clamp(.75rem, 1.65vw, 1.75rem);
   }
 
-  .survey-panel:has(> .survey-form) > * { grid-column: 1 / -1; }
-  .survey-panel:has(> .survey-form) > .survey-workhead { display: contents; }
-  .survey-panel:has(> .survey-form) .survey-work-heading { grid-area: 1 / 1; }
-  .survey-panel:has(> .survey-form) > .survey-form { grid-area: 2 / 1; }
-  .survey-panel:has(> .survey-form) .survey-timer {
+  .survey-panel:has(> .survey-form):has(.survey-timer) > * { grid-column: 1 / -1; }
+  .survey-panel:has(> .survey-form):has(.survey-timer) > .survey-workhead { display: contents; }
+  .survey-panel:has(> .survey-form):has(.survey-timer) .survey-work-heading { grid-area: 1 / 1; }
+  .survey-panel:has(> .survey-form):has(.survey-timer) > .survey-form { grid-area: 2 / 1; }
+  .survey-panel:has(> .survey-form):has(.survey-timer) .survey-timer {
     grid-area: 1 / 2 / span 2 / 3;
     align-self: center;
   }
@@ -1053,12 +1045,12 @@ button.survey-member:hover { background: color-mix(in srgb, var(--survey-paper) 
   .survey-team-head h2 { font-size: 1.2rem; }
   .survey-roster { grid-template-columns: repeat(4, minmax(0, 1fr)); }
   .survey-roster:has(.survey-member-status) { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .survey-member { min-height: 2.45rem; padding: .2rem; gap: .24rem; }
+  .survey-member { min-height: 2.3rem; padding: .2rem; gap: .24rem; }
   .survey-member-avatar { width: 1.25rem; font-size: .75rem; }
   .survey-member-name { font-size: .82rem; }
   .survey-member-status { font-size: .75rem; }
   .survey-rivals { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .35rem; }
-  .survey-rival { border-radius: .6rem; min-height: 2.5rem; padding: .25rem .38rem; }
+  .survey-rival { border-radius: .6rem; min-height: 2.3rem; padding: .25rem .38rem; }
   .survey-team-name { font-size: .78rem; gap: .22rem; }
   .survey-fruit { width: 1.15em; height: 1.15em; }
   .survey-rival-score { font-size: 1rem; }
@@ -1067,14 +1059,15 @@ button.survey-member:hover { background: color-mix(in srgb, var(--survey-paper) 
   .survey-spiral-layout:not(.has-history) { max-width: 5.35rem; }
   .survey-question { padding-bottom: .7rem; }
   .survey-question-progress { margin-bottom: .35rem; }
-  .survey-question h1 { font-size: clamp(1.65rem, 5.4vw, 2.55rem); }
-  .survey-board li { min-height: clamp(4.3rem, 15.5vw, 6.15rem); }
-  .survey-rank { font-size: clamp(2.5rem, 9vw, 4.4rem); }
+  .survey-question h1 { font-size: clamp(1.58rem, 5vw, 2.35rem); }
+  .survey-board li { min-height: clamp(3.9rem, 13.5vw, 5.4rem); }
+  .survey-rank { font-size: clamp(2.3rem, 8vw, 3.85rem); }
   .survey-timer { min-width: 6.8rem; }
   .survey-ready {
-    grid-template-columns: minmax(0, 1fr) minmax(5.4rem, auto);
+    grid-template-columns: minmax(0, 1fr);
     gap: .65rem;
   }
+  .survey-ready:has(> .survey-timer) { grid-template-columns: minmax(0, 1fr) minmax(5.4rem, auto); }
   .survey-ready-button { grid-column: 1 / -1; }
   .survey-ready-count { font-size: .875rem; }
 }

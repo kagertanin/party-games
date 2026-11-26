@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { SurveyGame, TurnReadiness, type Question } from "../src/survey/survey";
 import { renderTurnSpiral } from "../src/survey/turn-spiral";
+import { getTurnTiming } from "../src/survey/turn-timing";
 
 const question: Question = {
   prompt: "Что берут с собой на пикник?",
@@ -42,18 +43,20 @@ test("six different hits complete the board in two circuits, with each answer cr
   assert.deepEqual(game.teams.map((t) => t.score), [35, 28, 19]);
 });
 
-test("three circuits end the question and unopened rows award no points", () => {
+test("two circuits end the question and unopened rows award no points", () => {
   const game = new SurveyGame([question], 12);
   playAnswer(game, "Бутерброды!");
-  for (let turn = 1; turn < 9; turn++) {
+  for (let turn = 1; turn < 6; turn++) {
     assert.equal(game.phase, "turn");
     assert.equal(game.turnIndex, turn);
     playAnswer(game, "Пылесос");
   }
   assert.equal(game.phase, "reveal");
+  assert.deepEqual(game.turnHistory.map(({ team }) => team), [0, 1, 2, 0, 1, 2]);
   assert.equal(game.opened.size, 1);
   assert.deepEqual(game.teams.map((t) => t.score), [25, 0, 0]);
   game.finishTurn();
+  assert.equal(game.turnHistory.length, 6);
   assert.deepEqual(game.teams.map((t) => t.score), [25, 0, 0]);
 });
 
@@ -67,12 +70,25 @@ test("each team starts one question; final reveal is followed by results", () =>
     assert.equal(game.turnIndex, 0);
     assert.equal(game.opened.size, 0);
     playAnswer(game, "Еда");
-    for (let turn = 1; turn < 9; turn++) game.finishTurn();
+    for (let turn = 1; turn < 6; turn++) game.finishTurn();
     assert.equal(game.phase, "reveal");
     game.nextQuestion();
   }
   assert.equal(game.phase, "results");
   assert.deepEqual(game.teams.map((t) => t.score), [25, 25, 25]);
+});
+
+test("only the first circuit of the game has three minutes and a delayed countdown", () => {
+  const openingTiming = { durationMs: 180_000, showClockAtMs: 150_000, voteOnlyMs: 10_000 };
+  const standardTiming = { durationMs: 60_000, showClockAtMs: 0, voteOnlyMs: 10_000 };
+  assert.deepEqual(getTurnTiming(0, 0, 3), openingTiming);
+  assert.deepEqual(getTurnTiming(0, 1, 3), openingTiming);
+  assert.deepEqual(getTurnTiming(0, 2, 3), openingTiming);
+  assert.deepEqual(getTurnTiming(0, 3, 3), standardTiming);
+  assert.deepEqual(getTurnTiming(0, 5, 3), standardTiming);
+  assert.deepEqual(getTurnTiming(1, 0, 3), standardTiming);
+  assert.deepEqual(getTurnTiming(2, 0, 3), standardTiming);
+  assert.deepEqual(getTurnTiming(0, 2, 2), standardTiming);
 });
 
 test("readiness starts the turn as soon as all teammates confirm", () => {
@@ -119,7 +135,7 @@ test("turn history stores the outcome and opened row, then resets on the next qu
   ]);
   assert.equal(game.lastAnswer, game.turnHistory[3]);
   while (game.phase === "turn") game.finishTurn();
-  assert.equal(game.turnHistory.length, 9);
+  assert.equal(game.turnHistory.length, 6);
   game.nextQuestion();
   assert.deepEqual(game.turnHistory, []);
   assert.equal(game.lastAnswer, null);
@@ -133,15 +149,15 @@ test("the spiral follows team order and ends at its last fruit checkpoint", () =
     { text: "Плед", kind: "repeat" },
     { text: "", kind: "pass" },
   ] as const;
-  const spiral = renderTurnSpiral([1, 2, 0], 3, history.length, true, history);
+  const spiral = renderTurnSpiral([1, 2, 0], 2, history.length, true, history);
   const nodes = Array.from(spiral.matchAll(
     /survey-spiral-node survey-team-(\d)([^"]*)" transform="translate\(([^)]+)\)"/g,
   ));
-  assert.deepEqual(nodes.map(([, team]) => Number(team)), [1, 2, 0, 1, 2, 0, 1, 2, 0]);
+  assert.deepEqual(nodes.map(([, team]) => Number(team)), [1, 2, 0, 1, 2, 0]);
   assert.deepEqual(nodes.map(([, , state]) => state.trim()), [
-    "is-played", "is-played", "is-played", "is-played", "is-current", "", "", "", "",
+    "is-played", "is-played", "is-played", "is-played", "is-current", "",
   ]);
-  assert.equal(Array.from(spiral.matchAll(/class="survey-fruit survey-spiral-fruit"/g)).length, 9);
+  assert.equal(Array.from(spiral.matchAll(/class="survey-fruit survey-spiral-fruit"/g)).length, 6);
   const path = spiral.match(/class="survey-spiral-track" d="([^"]+)"/)![1];
   assert.equal(path.split(" L").at(-1), nodes.at(-1)![3]);
   const connectors = Array.from(spiral.matchAll(/survey-spiral-connector" d="M([^L]+) L/g));
@@ -152,7 +168,7 @@ test("the spiral follows team order and ends at its last fruit checkpoint", () =
   assert.match(spiral, /title="Вариант &lt;с кавычками&gt; &quot;&amp;&quot;\. Ответа нет на табло"/);
   assert.match(spiral, /class="survey-spiral-answer" aria-hidden="true">Пропуск</);
 
-  const revealed = renderTurnSpiral([1, 2, 0], 3, 6, false);
+  const revealed = renderTurnSpiral([1, 2, 0], 2, 6, false);
   assert.equal(Array.from(revealed.matchAll(/is-played/g)).length, 6);
   assert.doesNotMatch(revealed, /is-current/);
 });

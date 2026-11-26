@@ -4,16 +4,18 @@ import { demoGuesses, questions } from "./questions";
 import { renderTurnSpiral } from "./turn-spiral";
 import { renderFruit } from "./fruit-icons";
 import { animateTurnResult } from "./turn-animation";
+import { getTurnTiming } from "./turn-timing";
 
-const TURN_MS = 30_000;
-const VOTE_ONLY_MS = 10_000;
 const READY_MS = 10_000;
 const escape = (text: string) =>
   text.replace(/[&<>"']/g, (char) => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
   })[char]!);
-const clockText = (milliseconds: number) =>
-  `00:${String(Math.ceil(milliseconds / 1000)).padStart(2, "0")}`;
+function clockText(milliseconds: number) {
+  const seconds = Math.ceil(milliseconds / 1000);
+  const minutes = Math.floor(seconds / 60);
+  return `${String(minutes).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
+}
 
 export function mountSurveyDemo(app: HTMLElement) {
   let game: SurveyGame | null = null;
@@ -28,6 +30,8 @@ export function mountSurveyDemo(app: HTMLElement) {
   document.title = "Угадай ответ · Party Games";
 
   const timeLeft = () => Math.max(0, deadline - performance.now());
+  const turnTiming = (match: SurveyGame) =>
+    getTurnTiming(match.questionIndex, match.turnIndex, match.teams.length);
 
   function teamSidebar(match: SurveyGame) {
     const hasTurn = match.phase === "turn";
@@ -103,16 +107,6 @@ export function mountSurveyDemo(app: HTMLElement) {
     </section>`;
   }
 
-  function resultText(match: SurveyGame) {
-    const result = match.lastAnswer;
-    if (!result) return "";
-    const answer = escape(result.text);
-    return `<div class="survey-feedback ${result.kind}" role="status">
-      <strong>${match.teams[result.team].name}${result.kind === "pass" ? " пропустили ход" : ` · «${answer}»`}</strong>
-      <span>${{hit: `Ответ на табло · +${result.points} очков`, miss: "Такого ответа нет на табло", repeat: "Эта строка уже открыта", pass: "Голосов не было"}[result.kind]}</span>
-    </div>`;
-  }
-
   function turnPanel(match: SurveyGame) {
     if (resolving) {
       const verdict = {hit: "Верно!", miss: "Мимо!", repeat: "Уже открыто", pass: "Ход пропущен"}[resolving.kind];
@@ -126,12 +120,12 @@ export function mountSurveyDemo(app: HTMLElement) {
     if (match.phase === "reveal") {
       return `<section class="survey-panel survey-recap">
         <h2>Вопрос завершён</h2>
-        <p>${match.opened.size === 6 ? "Все шесть ответов угаданы." : "Три круга закончились. Открыли оставшиеся строки, очки за них никому не начислены."}</p>
-        ${resultText(match)}
+        <p>${match.opened.size === match.question.answers.length ? "Все шесть ответов угаданы." : "Два круга закончились. Открыли оставшиеся строки, очки за них никому не начислены."}</p>
         <button class="survey-button primary-action" data-survey="next-question">${match.questionIndex + 1 === questions.length ? "Показать итоги" : "Следующий вопрос"}</button>
       </section>`;
     }
     const team = match.teams[match.activeTeam];
+    const timing = turnTiming(match);
     if (readiness) {
       const confirmed = readiness.isReady(player);
       return `<section class="survey-panel survey-team-${match.activeTeam}" aria-label="Подготовка команды">
@@ -140,10 +134,9 @@ export function mountSurveyDemo(app: HTMLElement) {
             <h2>${renderFruit(match.activeTeam)}${escape(team.name)}, ваш ход!</h2>
             <p class="survey-ready-count" role="status">Готовы ${readiness.count} из ${team.players.length}</p>
           </div>
-          ${timer(readiness.remaining(performance.now()), READY_MS, "До начала", "Время до начала хода")}
+          ${timing.showClockAtMs === 0 ? timer(readiness.remaining(performance.now()), READY_MS, "До начала", "Время до начала хода") : ""}
           <button class="survey-button survey-ready-button" data-survey="ready" ${confirmed ? "disabled" : ""}>${confirmed ? "Вы готовы" : "Готов"}</button>
         </div>
-        ${resultText(match)}
       </section>`;
     }
     const selected = match.votes.get(player);
@@ -158,13 +151,15 @@ export function mountSurveyDemo(app: HTMLElement) {
       </button>`;
     }).join("");
 
+    const remaining = timeLeft();
+    const visibleWindowMs = timing.durationMs - timing.showClockAtMs;
     return `<section class="survey-panel survey-team-${match.activeTeam}" aria-label="Ход команды">
       <div class="survey-workhead">
         <div class="survey-work-heading">
           <h2>${votingOnly ? "Время голосовать" : "Предложите ответ"}</h2>
           ${votingOnly ? '<p class="survey-phase">Приём вариантов завершён.</p>' : ""}
         </div>
-        ${timer(timeLeft(), TURN_MS, "Ваш ход", "Время хода")}
+        ${remaining <= visibleWindowMs ? timer(remaining, visibleWindowMs, "Ваш ход", "Время хода") : ""}
       </div>
         ${votingOnly ? "" : hasProposed ? `<p class="survey-muted">Твой вариант в списке. Теперь проголосуй.</p>` : `
           <form class="survey-form" id="survey-propose">
@@ -206,8 +201,8 @@ export function mountSurveyDemo(app: HTMLElement) {
         <ol>
           <li><strong>Три вопроса</strong><span>На каждый — шесть ответов из опроса.</span></li>
           <li><strong>Три команды по очереди</strong><span>На готовность — до 10 секунд. Все готовы — ход начинается сразу.</span></li>
-          <li><strong>30 секунд на ход</strong><span>20 секунд на предложения, последние 10 — только на выбор.</span></li>
-          <li><strong>До трёх кругов на вопрос</strong><span>Всё угадали — заканчиваем раньше. Остаток открываем без начисления очков.</span></li>
+          <li><strong>На первые ходы — по 3 минуты</strong><span>Отсчёт виден в последние 30 секунд. Дальше на ход одна минута, последние 10 секунд — голосование.</span></li>
+          <li><strong>Два круга на вопрос</strong><span>Оставшиеся ответы открываются без начисления очков.</span></li>
         </ol>
       </aside>
     </main>`;
@@ -255,8 +250,9 @@ export function mountSurveyDemo(app: HTMLElement) {
   }
 
   function beginTurn() {
+    if (!game) return;
     readiness = null;
-    deadline = performance.now() + TURN_MS;
+    deadline = performance.now() + turnTiming(game).durationMs;
     votingOnly = false;
     proposalError = "";
     draft = "";
@@ -320,13 +316,14 @@ export function mountSurveyDemo(app: HTMLElement) {
       else updateClock(readiness.remaining(now));
       return;
     }
-    if (!deadline) return;
+    if (!game || !deadline) return;
     const remaining = timeLeft();
     if (!remaining) {
       void finishTurn();
       return;
     }
-    if (!votingOnly && remaining <= VOTE_ONLY_MS) {
+    const timing = turnTiming(game);
+    if (!votingOnly && remaining <= timing.voteOnlyMs) {
       const focused = document.activeElement;
       const previousPlayer = focused instanceof HTMLButtonElement ? focused.dataset.player : undefined;
       const previousVote = focused instanceof HTMLButtonElement ? focused.dataset.vote : undefined;
@@ -341,7 +338,15 @@ export function mountSurveyDemo(app: HTMLElement) {
         replacement = ".survey-proposal, [data-survey='submit']";
       }
       if (replacement) app.querySelector<HTMLButtonElement>(replacement)?.focus({preventScroll: true});
-    } else updateClock(remaining);
+    } else {
+      const visibleWindowMs = timing.durationMs - timing.showClockAtMs;
+      if (remaining > visibleWindowMs) return;
+      if (!app.querySelector("#survey-clock")) {
+        app.querySelector(".survey-workhead")?.insertAdjacentHTML(
+          "beforeend", timer(remaining, visibleWindowMs, "Ваш ход", "Время хода"),
+        );
+      } else updateClock(remaining);
+    }
   }
 
   function updateClock(remaining: number) {
@@ -375,7 +380,7 @@ export function mountSurveyDemo(app: HTMLElement) {
   app.addEventListener("submit", (event) => {
     if (!(event.target instanceof HTMLFormElement) || event.target.id !== "survey-propose") return;
     event.preventDefault();
-    if (!game || timeLeft() <= VOTE_ONLY_MS) { refreshTimer(); return; }
+    if (!game || timeLeft() <= turnTiming(game).voteOnlyMs) { refreshTimer(); return; }
     const answer = draft.trim();
     if (!answer) return;
     try {
@@ -413,7 +418,7 @@ export function mountSurveyDemo(app: HTMLElement) {
       return;
     }
     if (action === "submit") { void finishTurn(); return; }
-    if (action === "suggest" && timeLeft() > VOTE_ONLY_MS) addExamples(game);
+    if (action === "suggest" && timeLeft() > turnTiming(game).voteOnlyMs) addExamples(game);
     if (action === "next-question") {
       game.nextQuestion();
       if (game.phase === "turn") prepareTurn();

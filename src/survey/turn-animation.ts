@@ -1,5 +1,9 @@
 import type { TurnResult } from "./survey";
 
+const DURATION_MULTIPLIER = 3;
+const RESULT_READING_MS = 430 * DURATION_MULTIPLIER;
+const PASS_READING_MS = 900;
+
 type TurnAnimationElements = {
   root: HTMLElement;
   source: DOMRect | null;
@@ -11,6 +15,10 @@ type TurnAnimationElements = {
 };
 
 type Point = { x: number; y: number };
+
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
 
 function visibleCenter(rect: DOMRect | null | undefined, view: Window): Point | null {
   if (!rect) return null;
@@ -25,9 +33,10 @@ function visibleCenter(rect: DOMRect | null | undefined, view: Window): Point | 
 async function play(
   element: HTMLElement,
   keyframes: Keyframe[],
-  duration: number,
+  baseDuration: number,
   easing: string,
 ) {
+  const duration = baseDuration * DURATION_MULTIPLIER;
   const animation = element.animate(keyframes, { duration, easing, fill: "both" });
   let timeout: ReturnType<typeof setTimeout> | undefined;
   try {
@@ -71,11 +80,13 @@ async function fly(
 }
 
 export async function animateTurnResult(result: TurnResult, elements: TurnAnimationElements): Promise<void> {
+  if (result.kind === "pass") return delay(PASS_READING_MS);
+
   const { root, source, tile, score, verdict, reveal, award } = elements;
   const view = root.ownerDocument.defaultView;
   const motion = view && !view.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+  const readingTime = delay(RESULT_READING_MS);
   if (result.kind !== "hit") {
-    if (result.kind === "pass") return;
     if (motion && verdict) {
       await play(verdict, [
         { transform: "translateX(0)" },
@@ -85,8 +96,8 @@ export async function animateTurnResult(result: TurnResult, elements: TurnAnimat
         { transform: "translateX(0)", offset: .6 },
         { transform: "translateX(0)" },
       ], 430, "ease-in-out").catch(() => undefined);
-    } else await new Promise<void>((resolve) => setTimeout(resolve, 430));
-    return;
+    }
+    return readingTime;
   }
 
   const destination = view && visibleCenter(tile?.getBoundingClientRect(), view);
@@ -142,5 +153,6 @@ export async function animateTurnResult(result: TurnResult, elements: TurnAnimat
     } finally {
       score.classList.remove("survey-score-pulse");
     }
-  } else if (!motion) await new Promise<void>((resolve) => setTimeout(resolve, 430));
+  }
+  await readingTime;
 }

@@ -18,7 +18,7 @@ export type TurnResult = Readonly<{
 }>;
 
 const TEAMS = ["Яблоки", "Апельсины", "Сливы"];
-export const MAX_ROUNDS = 3;
+export const MAX_ROUNDS = 2;
 const MAX_ANSWER_LENGTH = 80;
 
 export class TurnReadiness {
