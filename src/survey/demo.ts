@@ -1,5 +1,5 @@
 import "./demo.css";
-import { MAX_ROUNDS, MAX_SURVEY_PLAYERS, MIN_SURVEY_PLAYERS, SurveyGame, TurnReadiness, surveyTeamCounts, type TurnResult } from "./survey";
+import { MAX_ROUNDS, MAX_SURVEY_PLAYERS, MIN_SURVEY_PLAYERS, SurveyGame, TurnReadiness, type TurnResult } from "./survey";
 import { demoGuesses, questions } from "./questions";
 import { renderTurnSpiral } from "./turn-spiral";
 import { renderFruit } from "./fruit-icons";
@@ -8,11 +8,11 @@ import { getReadinessClockAtMs, getTurnTiming, READINESS_MS } from "./turn-timin
 import { mountHoldConfirm } from "./hold-confirm";
 import { QuestionBallot, QUESTION_BALLOT_CLOCK_MS, QUESTIONS_PER_MATCH } from "./question-ballot";
 import { animateQuestionChoice } from "./question-transition";
+import { createSurveyLobby } from "./online-lobby";
+import { displayOnlineMatch, type SurveyDisplay } from "./online-match";
+import type { SurveyMatchView, SurveyRoomView } from "../../shared/survey-online";
 
 const DEMO_PLAYER_COUNT = 12;
-const PLAYER_COUNTS = Array.from(
-  {length: MAX_SURVEY_PLAYERS - MIN_SURVEY_PLAYERS + 1}, (_, index) => MIN_SURVEY_PLAYERS + index,
-);
 
 const escape = (text: string) =>
   text.replace(/[&<>"']/g, (char) => ({
@@ -41,19 +41,39 @@ export function mountSurveyDemo(app: HTMLElement) {
   let proposalError = "";
   let readiness: TurnReadiness | null = null;
   let resolving: TurnResult | null = null;
+  let liveDeadline = 0;
+  let lastOnlineView: SurveyRoomView | null = null;
+  let livePhaseId: number | undefined;
+  let liveClockVisible = false;
+  let liveVotingOnly = false;
+  const lobby = createSurveyLobby(app, updateOnline);
   document.title = "Сто к одному · Party Games";
 
-  const timeLeft = () => Math.max(0, deadline - performance.now());
-  const turnTiming = (match: SurveyGame) =>
+  const liveMatch = () => lobby.view?.match;
+  const timeLeft = () => Math.max(0, (liveMatch() ? liveDeadline : deadline) - performance.now());
+  const turnTiming = (match: SurveyDisplay) =>
     getTurnTiming(match.questionIndex, match.turnIndex, match.teams.length);
-  const readyClockWindow = (match: SurveyGame) =>
+  const readyClockWindow = (match: SurveyDisplay) =>
     READINESS_MS - getReadinessClockAtMs(match.questionIndex, match.turnIndex, match.teams.length);
-  const visibleTurnClockWindow = (match: SurveyGame) => {
+  const visibleTurnClockWindow = (match: SurveyDisplay) => {
     const {durationMs, showClockAtMs} = turnTiming(match);
     return durationMs - showClockAtMs;
   };
-  const canAct = (match: SurveyGame) => viewingTeam === null || viewingTeam === match.activeTeam;
+  const canAct = (match: SurveyDisplay) => liveMatch()
+    ? lobby.connected && viewingTeam === match.activeTeam
+    : viewingTeam === null || viewingTeam === match.activeTeam;
+  const isBallot = () => liveMatch()?.phase === "ballot" || questionBallot !== null;
+  const readyPlayer = (index: number) => liveMatch()?.ready.includes(index) ?? readiness?.isReady(index) ?? false;
+  const waitingForTeam = () => liveMatch() ? liveMatch()?.phase === "ready" : readiness !== null;
+  const canAdvance = () => !lobby.view || (lobby.connected && lobby.view.you === lobby.view.owner);
   const cancelHold = mountHoldConfirm(app, (id) => {
+    const match = liveMatch();
+    if (match) {
+      if (match.phase === "turn" && match.confirmationId === id) {
+        lobby.send({ type: "confirm", phaseId: match.phaseId, id });
+      }
+      return;
+    }
     if (!game || !deadline || resolving || !canAct(game)) return;
     const remaining = timeLeft();
     if (!remaining) {
@@ -63,9 +83,9 @@ export function mountSurveyDemo(app: HTMLElement) {
     }
   });
 
-  function teamSidebar(match: SurveyGame) {
-    const hasTurn = match.phase === "turn" && !questionBallot && !changingQuestion;
-    const playing = hasTurn && deadline !== 0;
+  function teamSidebar(match: SurveyDisplay) {
+    const hasTurn = match.phase === "turn" && !isBallot() && !changingQuestion;
+    const playing = hasTurn && (liveMatch() ? liveMatch()?.phase === "turn" : deadline !== 0);
     const activeTeam = resolving?.team ?? (hasTurn ? match.activeTeam : -1);
     const ownTeam = viewingTeam ?? (resolving?.team ?? match.lastAnswer?.team ?? match.activeTeam);
     const perspectiveTeam = viewingTeam === null && hasTurn ? match.activeTeam : ownTeam;
@@ -83,7 +103,7 @@ export function mountSurveyDemo(app: HTMLElement) {
           const own = teamIndex === perspectiveTeam;
           const open = expandedTeam === teamIndex;
           const current = teamIndex === activeTeam;
-          const interactive = own && current && (playing || readiness !== null);
+          const interactive = !liveMatch() && own && current && (playing || waitingForTeam());
           const score = displayedScore(teamIndex);
           return `<section class="survey-team-section survey-team-${teamIndex}${own ? " is-own" : ""}${current ? " is-current" : ""}${open ? " is-expanded" : ""}">
             <button class="survey-team-toggle" data-expand-team="${teamIndex}" aria-expanded="${open}" aria-controls="survey-roster-${teamIndex}">
@@ -98,7 +118,7 @@ export function mountSurveyDemo(app: HTMLElement) {
             const selected = own && player === index;
             const member = `<span class="survey-member-avatar" aria-hidden="true">${index + 1}</span>
               <span class="survey-member-name">${escape(name)}${selected ? '<small class="survey-member-you"> (вы)</small>' : ""}</span>
-              ${current && readiness?.isReady(index) ? '<small class="survey-member-status is-ready" aria-label="Готов">✓</small>'
+              ${current && readyPlayer(index) ? '<small class="survey-member-status is-ready" aria-label="Готов">✓</small>'
                 : current && playing && match.votes.has(index) ? '<small class="survey-member-status" aria-label="Голос отдан">✓</small>' : ""}`;
             return interactive
               ? `<li><button class="survey-member" data-player="${index}" aria-pressed="${selected}">${member}</button></li>`
@@ -108,13 +128,13 @@ export function mountSurveyDemo(app: HTMLElement) {
         </section>`;
         }).join("")}
       </div>
-      ${!questionBallot && !changingQuestion ? `<div class="survey-turn-progress" role="group" aria-label="${progressLabel} Сыграно ${playedTurns} из ${totalTurns} возможных ходов.">
+      ${!isBallot() && !changingQuestion ? `<div class="survey-turn-progress" role="group" aria-label="${progressLabel} Сыграно ${playedTurns} из ${totalTurns} возможных ходов.">
         ${renderTurnSpiral(teamOrder, MAX_ROUNDS, playedTurns, hasTurn && !resolving, match.turnHistory)}
       </div>` : ""}
     </aside>`;
   }
 
-  function questionProgress(match: SurveyGame) {
+  function questionProgress(match: SurveyDisplay) {
     return `<div class="survey-question-progress" role="img" aria-label="Вопрос ${match.questionIndex + 1} из ${match.questionLimit}">
       ${Array.from({length: match.questionLimit}, (_, index) => `<span class="survey-question-node${index < match.questionIndex ? " is-past" : index === match.questionIndex ? " is-current" : ""}" aria-hidden="true"></span>`).join("")}
     </div>`;
@@ -143,19 +163,41 @@ export function mountSurveyDemo(app: HTMLElement) {
     </section>`;
   }
 
+  function onlineQuestionPicker(match: SurveyDisplay) {
+    const ballot = liveMatch()?.ballot;
+    if (!ballot) return "";
+    const remaining = timeLeft();
+    const votes = ballot.choices.reduce((count, choice) => count + choice.votes, 0);
+    const members = match.teams.reduce((count, team) => count + team.players.length, 0);
+    return `<section class="survey-question-ballot" aria-labelledby="survey-ballot-title">
+      <div class="survey-question">${questionProgress(match)}<h1 id="survey-ballot-title" tabindex="-1">На какой вопрос будем отвечать?</h1></div>
+      <div class="survey-ballot-status">
+        <span role="status">Проголосовали ${votes}/${members}</span>
+        ${remaining <= QUESTION_BALLOT_CLOCK_MS ? ballotClock(remaining) : ""}
+      </div>
+      <div class="survey-ballot-choices">
+        ${ballot.choices.map(({ id, prompt, votes }) => `<button class="survey-question-option" data-question-id="${id}" aria-pressed="${ballot.selected === id}" ${lobby.connected && remaining > 0 ? "" : "disabled"}>
+          <span class="survey-question-option-text">${escape(prompt)}</span>
+          <span class="survey-question-votes" aria-label="Голосов: ${votes}">${votes}</span>
+        </button>`).join("")}
+      </div>
+    </section>`;
+  }
+
   function ballotClock(remaining: number) {
     const seconds = Math.ceil(remaining / 1000);
     return `<time class="survey-ballot-clock" datetime="PT${seconds}S" aria-label="До закрытия голосования">${seconds} с</time>`;
   }
 
-  function revealedTile(match: SurveyGame, index: number, team: number | undefined) {
+  function revealedTile(match: SurveyDisplay, index: number, team: number | undefined) {
     const answer = match.question.answers[index];
+    if (!answer) return "";
     return `<span class="survey-rank">${index + 1}</span>
       <span class="survey-answer">${escape(answer.label)}</span>
       <span class="survey-points" aria-label="${team === undefined ? "Не начислено" : "Очки"}: ${answer.points}">${answer.points}</span>`;
   }
 
-  function board(match: SurveyGame) {
+  function board(match: SurveyDisplay) {
     const revealed = match.phase === "reveal" && !resolving;
     return `<section class="survey-board" aria-label="Табло ответов">
       <ol>${match.question.answers.map((_, index) => {
@@ -167,7 +209,7 @@ export function mountSurveyDemo(app: HTMLElement) {
     </section>`;
   }
 
-  function turnPanel(match: SurveyGame) {
+  function turnPanel(match: SurveyDisplay) {
     if (resolving) {
       const verdict = {hit: "Верно!", miss: "Мимо!", repeat: "Уже открыто", pass: "Ход пропущен"}[resolving.kind];
       return `<section class="survey-panel" aria-label="Результат хода">
@@ -181,20 +223,21 @@ export function mountSurveyDemo(app: HTMLElement) {
       return `<section class="survey-panel survey-recap">
         <h2>Вопрос завершён</h2>
         <p>${match.opened.size === match.question.answers.length ? "Все шесть ответов угаданы." : "Два круга закончились. Открыли оставшиеся строки, очки за них никому не начислены."}</p>
-        <button class="survey-button primary-action" data-survey="next-question">${match.questionIndex + 1 === match.questionLimit ? "Показать итоги" : "Выбрать следующий вопрос"}</button>
+        ${canAdvance() ? `<button class="survey-button primary-action" data-survey="next-question">${match.questionIndex + 1 === match.questionLimit ? "Показать итоги" : "Выбрать следующий вопрос"}</button>` : '<p class="survey-muted">Ждём ведущего.</p>'}
       </section>`;
     }
     const team = match.teams[match.activeTeam];
     const ownTurn = canAct(match);
-    if (readiness) {
-      const confirmed = readiness.isReady(player);
-      const remaining = readiness.remaining(performance.now());
+    if (waitingForTeam()) {
+      const confirmed = readyPlayer(player);
+      const remaining = readiness?.remaining(performance.now()) ?? timeLeft();
+      const readyCount = liveMatch()?.ready.length ?? readiness?.count ?? 0;
       return `<section class="survey-panel survey-team-${match.activeTeam}${ownTurn ? "" : " is-spectator"}" aria-label="Подготовка команды">
         <div class="survey-ready">
           <div class="survey-ready-copy">
             <h2 tabindex="-1">${escape(team.name)} — ваш ход!</h2>
             <div class="survey-ready-status">
-              <p class="survey-ready-count" role="status">Готовы <strong>${readiness.count}/${team.players.length}</strong></p>
+              <p class="survey-ready-count" role="status">Готовы <strong>${readyCount}/${team.players.length}</strong></p>
               ${remaining <= readyClockWindow(match) ? readyClock(remaining) : ""}
             </div>
           </div>
@@ -206,34 +249,35 @@ export function mountSurveyDemo(app: HTMLElement) {
       </section>`;
     }
     const hasProposed = match.hasProposed(player);
+    const choosingOnly = liveMatch() ? liveVotingOnly : votingOnly;
     const remaining = timeLeft();
     const visibleWindowMs = visibleTurnClockWindow(match);
     const showClock = remaining <= visibleWindowMs;
     return `<section class="survey-panel survey-team-${match.activeTeam}${ownTurn ? "" : " is-spectator"}" aria-label="Ход команды">
       <div class="survey-workhead">
         <div class="survey-work-heading">
-          <h2 tabindex="-1">${!ownTurn ? `Отвечают «${escape(team.name)}»` : votingOnly ? "Время голосовать" : "Предложите ответ"}</h2>
+          <h2 tabindex="-1">${!ownTurn ? `Отвечают «${escape(team.name)}»` : choosingOnly ? "Время голосовать" : "Предложите ответ"}</h2>
         </div>
         ${showClock ? timer(remaining, visibleWindowMs, ownTurn ? "Ваш ход" : "До конца хода", "Время хода") : ""}
       </div>
       ${ownTurn ? `
-        ${votingOnly ? "" : hasProposed ? `<p class="survey-muted survey-proposal-status">Твой вариант в списке.</p>` : `
+        ${choosingOnly ? "" : hasProposed ? `<p class="survey-muted survey-proposal-status">Твой вариант в списке.</p>` : `
           <form class="survey-form" id="survey-propose">
             <input name="answer" aria-label="Твой вариант ответа" placeholder="Ваш вариант" value="${escape(draft)}" maxlength="80" required autocomplete="off" aria-describedby="survey-error">
             <button class="survey-button primary-action" type="submit">Отправить ответ</button>
           </form>`}
-        <p id="survey-error" class="survey-error" role="status">${escape(proposalError)}</p>
+        <p id="survey-error" class="survey-error" role="status">${liveMatch() ? "" : escape(proposalError)}</p>
       ` : ""}
       <div class="survey-step"><h3>${ownTurn ? "Выберите ответ команды" : "Варианты ответа команды"}</h3><small>Голосов: ${match.votes.size}/${team.players.length}</small></div>
       <div class="survey-proposals">${proposalCards(match, showClock)}</div>
-      ${ownTurn && isDemo && !votingOnly ? `
+      ${ownTurn && !liveMatch() && isDemo && !votingOnly ? `
         <div class="survey-turn-actions">
           <button class="survey-button secondary-action" data-survey="suggest">Примеры от команды</button>
         </div>` : ""}
     </section>`;
   }
 
-  function proposalCards(match: SurveyGame, timerVisible: boolean) {
+  function proposalCards(match: SurveyDisplay, timerVisible: boolean) {
     const ownTurn = canAct(match);
     if (!match.proposals.length) return `<p class="survey-muted">${ownTurn ? "Здесь появятся варианты вашей команды." : "Команда пока не предложила ни одного ответа."}</p>`;
     const selected = match.votes.get(player);
@@ -275,12 +319,6 @@ export function mountSurveyDemo(app: HTMLElement) {
     </div>`;
   }
 
-  function teamOptions(size: number, current?: number) {
-    const counts = surveyTeamCounts(size);
-    const selected = current !== undefined && counts.includes(current) ? current : counts.at(-1);
-    return counts.map((count) => `<option value="${count}" ${count === selected ? "selected" : ""}>${count}</option>`).join("");
-  }
-
   function setup() {
     return `<main class="survey-wrap survey-setup">
       <section class="survey-intro" aria-labelledby="survey-title">
@@ -295,22 +333,10 @@ export function mountSurveyDemo(app: HTMLElement) {
       </section>
       <img class="survey-illustration" src="/survey-illustration.webp" width="950" height="712"
         alt="На вопрос «Что берут на пляж?» игрок отвечает «Крем». Третья карточка открывается и приносит его команде 18 очков.">
-      <dialog class="survey-start-dialog" id="survey-start-dialog" aria-labelledby="survey-start-title">
-        <form class="survey-start-form" id="survey-start-form">
-          <h2 id="survey-start-title">Соберите команды</h2>
-          <p>Партия на одном экране. Передавайте управление друг другу по очереди.</p>
-          <label>Игроков <select id="survey-size" name="size" autofocus>${PLAYER_COUNTS.map((size) => `<option value="${size}" ${size === playerCount ? "selected" : ""}>${size}</option>`).join("")}</select></label>
-          <label>Команд <select id="survey-team-count" name="teams">${teamOptions(playerCount)}</select></label>
-          <div class="survey-dialog-actions">
-            <button class="survey-button primary-action" type="submit">Начать партию</button>
-            <button class="survey-button secondary-action" data-survey="close-setup" type="button">Назад</button>
-          </div>
-        </form>
-      </dialog>
     </main>`;
   }
 
-  function results(match: SurveyGame) {
+  function results(match: SurveyDisplay) {
     const standings = [...match.teams].sort((a, b) => b.score - a.score);
     const winners = standings.filter((team) => team.score === standings[0].score);
     return `<main class="survey-wrap survey-results">
@@ -321,33 +347,98 @@ export function mountSurveyDemo(app: HTMLElement) {
         const index = match.teams.indexOf(team);
         return `<li class="survey-team-${index}"><span>${renderFruit(index)}${team.name}</span><strong>${team.score}</strong></li>`;
       }).join("")}</ol>
-      <button class="survey-button primary-action" data-survey="reset">Сыграть ещё</button>
+      ${canAdvance() ? '<button class="survey-button primary-action" data-survey="reset">Сыграть ещё</button>' : '<p class="survey-muted">Ждём ведущего.</p>'}
     </main>`;
   }
 
   function render() {
     cancelHold();
+    const room = lobby.view;
+    const live = room?.match;
+    const match = room && live ? displayOnlineMatch(room, live) : game;
     app.classList.add("survey-app");
-    app.classList.toggle("is-landing", !game);
+    app.classList.toggle("is-landing", !match && !room);
     app.innerHTML = `
-      <header class="survey-header"><a href="./" class="survey-brand">Party Games</a>${game ? "<span>Сто к одному</span>" : ""}
-        ${isDemo && game && game.phase !== "results" ? `<label class="survey-view-choice">Команда в демо
+      <header class="survey-header"><a href="./" class="survey-brand">Party Games</a>${match || room ? "<span>Сто к одному</span>" : ""}
+        ${!room && isDemo && game && game.phase !== "results" ? `<label class="survey-view-choice">Команда в демо
           <select id="survey-view-team">
             ${game.teams.map((team, index) => `<option value="${index}" ${viewingTeam === index ? "selected" : ""}>${escape(team.name)}</option>`).join("")}
             <option value="auto" ${viewingTeam === null ? "selected" : ""}>Все по очереди</option>
           </select></label>` : ""}<a href="./">Все игры</a></header>
-      ${!game ? setup() : game.phase === "results" ? results(game) : `
+      ${room && match ? lobby.connectionMarkup() : ""}
+      ${!match ? room ? lobby.lobbyMarkup() : setup() : match.phase === "results" ? results(match) : `
         <main class="survey-wrap survey-match">
-          ${teamSidebar(game)}
+          ${teamSidebar(match)}
           <div class="survey-main">
-            ${questionBallot ? questionPicker(game, questionBallot) : `<div class="survey-question">
-              ${questionProgress(game)}
-              <h1>${escape(game.question.prompt)}</h1>
+            ${live?.phase === "ballot" ? onlineQuestionPicker(match) : game && questionBallot ? questionPicker(game, questionBallot) : `<div class="survey-question">
+              ${questionProgress(match)}
+              <h1>${escape(match.question.prompt)}</h1>
             </div>
-            ${board(game)}
-            ${changingQuestion ? "" : turnPanel(game)}`}
+            ${board(match)}
+            ${changingQuestion ? "" : turnPanel(match)}`}
           </div>
         </main>`}`;
+  }
+
+  function updateOnline() {
+    const room = lobby.view;
+    const match = room?.match;
+    if (!room || !match) {
+      livePhaseId = undefined;
+      lastOnlineView = null;
+      render();
+      return;
+    }
+
+    const changedPhase = livePhaseId !== match.phaseId;
+    livePhaseId = match.phaseId;
+    if (lastOnlineView !== room) {
+      liveDeadline = match.deadline ? performance.now() + match.deadline - room.serverNow : 0;
+      lastOnlineView = room;
+    }
+    viewingTeam = room.teams.findIndex((team) => team.players.some((member) => member.id === room.you));
+    player = room.teams[viewingTeam]?.players.findIndex((member) => member.id === room.you) ?? -1;
+    if (changedPhase) {
+      draft = "";
+      expandedTeam = viewingTeam;
+    } else if (match.submitted) {
+      draft = "";
+    }
+    updateOnlineClockState(match, room.teamCount);
+    renderOnlineUpdate(changedPhase);
+  }
+
+  function renderOnlineUpdate(changedPhase = false) {
+    const focused = document.activeElement;
+    const input = focused instanceof HTMLInputElement && focused.name === "answer" ? focused : null;
+    const selection = input ? [input.selectionStart, input.selectionEnd] as const : null;
+    const activeButton = focused instanceof HTMLButtonElement ? focused : null;
+    const focusAttribute = ["data-question-id", "data-expand-team", "data-vote", "data-confirm-proposal"].find((attribute) => activeButton?.hasAttribute(attribute));
+    render();
+    if (changedPhase) {
+      const next = app.querySelector<HTMLElement>("#survey-ballot-title, #survey-propose input, .survey-ready-copy h2, .survey-panel h2");
+      next?.focus({ preventScroll: true });
+    } else if (selection) {
+      const next = app.querySelector<HTMLInputElement>("#survey-propose input");
+      next?.focus({ preventScroll: true });
+      if (next && selection[0] !== null && selection[1] !== null) next.setSelectionRange(selection[0], selection[1]);
+    } else if (focusAttribute && activeButton) {
+      app.querySelector<HTMLElement>(`[${focusAttribute}="${activeButton.getAttribute(focusAttribute)}"]`)?.focus({ preventScroll: true });
+    }
+  }
+
+  function updateOnlineClockState(match: SurveyMatchView, teamCount: number) {
+    const { phase, questionIndex, turnIndex } = match;
+    const turn = getTurnTiming(questionIndex, turnIndex, teamCount);
+    const remaining = timeLeft();
+    const visible = phase === "ballot" ? remaining <= QUESTION_BALLOT_CLOCK_MS
+      : phase === "ready" ? remaining <= READINESS_MS - getReadinessClockAtMs(questionIndex, turnIndex, teamCount)
+      : phase === "turn" && remaining <= turn.durationMs - turn.showClockAtMs;
+    const voteOnly = phase === "turn" && remaining <= turn.voteOnlyMs;
+    const redraw = visible !== liveClockVisible || voteOnly !== liveVotingOnly;
+    liveClockVisible = visible;
+    liveVotingOnly = voteOnly;
+    return redraw;
   }
 
   function startQuestionBallot() {
@@ -459,6 +550,23 @@ export function mountSurveyDemo(app: HTMLElement) {
   }
 
   function refreshTimer() {
+    const room = lobby.view;
+    const live = room?.match;
+    if (room && live) {
+      if (updateOnlineClockState(live, room.teamCount)) {
+        renderOnlineUpdate();
+      } else if (live.phase === "ballot" && liveClockVisible) {
+        const clock = app.querySelector<HTMLTimeElement>(".survey-ballot-clock");
+        const seconds = Math.ceil(timeLeft() / 1000);
+        if (clock && clock.textContent !== `${seconds} с`) {
+          clock.textContent = `${seconds} с`;
+          clock.dateTime = `PT${seconds}S`;
+        }
+      } else if (liveClockVisible) {
+        updateClock(timeLeft());
+      }
+      return;
+    }
     if (!game) return;
     if (changingQuestion) return;
     if (questionBallot) {
@@ -559,11 +667,6 @@ export function mountSurveyDemo(app: HTMLElement) {
   });
   app.addEventListener("change", (event) => {
     if (!(event.target instanceof HTMLSelectElement)) return;
-    if (event.target.id === "survey-size") {
-      const teams = app.querySelector<HTMLSelectElement>("#survey-team-count");
-      if (teams) teams.innerHTML = teamOptions(Number(event.target.value), Number(teams.value));
-      return;
-    }
     if (!game || changingQuestion || resolving) return;
     if (event.target.id === "survey-question-voter" && questionBallot) {
       questionVoter = Number(event.target.value);
@@ -582,15 +685,16 @@ export function mountSurveyDemo(app: HTMLElement) {
   });
   app.addEventListener("submit", (event) => {
     if (!(event.target instanceof HTMLFormElement)) return;
-    if (event.target.id === "survey-start-form" && !game) {
-      event.preventDefault();
-      const settings = new FormData(event.target);
-      app.querySelector<HTMLDialogElement>("#survey-start-dialog")?.close();
-      startMatch(Number(settings.get("size")), false, Number(settings.get("teams")));
-      return;
-    }
     if (event.target.id !== "survey-propose") return;
     event.preventDefault();
+    const live = liveMatch();
+    if (live) {
+      const answer = draft.trim();
+      if (answer && live.phase === "turn" && !liveVotingOnly) {
+        lobby.send({ type: "propose", phaseId: live.phaseId, text: answer });
+      }
+      return;
+    }
     if (!game || questionBallot || changingQuestion || !canAct(game) || timeLeft() <= turnTiming(game).voteOnlyMs) { refreshTimer(); return; }
     const answer = draft.trim();
     if (!answer) return;
@@ -612,10 +716,29 @@ export function mountSurveyDemo(app: HTMLElement) {
     const button = event.target.closest<HTMLButtonElement>("button");
     if (!button || button.disabled) return;
     const action = button.dataset.survey;
+    const live = liveMatch();
+    if (live) {
+      const phaseId = live.phaseId;
+      if (button.dataset.expandTeam !== undefined) {
+        const team = Number(button.dataset.expandTeam);
+        expandedTeam = expandedTeam === team ? null : team;
+        renderOnlineUpdate();
+      } else if (live.phase === "ballot" && button.dataset.questionId !== undefined) {
+        lobby.send({ type: "question", phaseId, id: Number(button.dataset.questionId) });
+      } else if (live.phase === "ready" && action === "ready") {
+        lobby.send({ type: "ready", phaseId });
+      } else if (live.phase === "turn" && button.dataset.vote !== undefined) {
+        lobby.send({ type: "vote", phaseId, id: Number(button.dataset.vote) });
+      } else if (live.phase === "reveal" && action === "next-question") {
+        lobby.send({ type: "next", phaseId });
+      } else if (live.phase === "results" && action === "reset") {
+        lobby.send({ type: "replay", phaseId });
+      }
+      return;
+    }
     if (!game) {
-      const dialog = app.querySelector<HTMLDialogElement>("#survey-start-dialog");
-      if (action === "setup") dialog?.showModal();
-      if (action === "close-setup") dialog?.close();
+      if (lobby.view) return;
+      if (action === "setup") lobby.open();
       if (action === "demo") startMatch(DEMO_PLAYER_COUNT, true);
       return;
     }
@@ -683,4 +806,5 @@ export function mountSurveyDemo(app: HTMLElement) {
   });
   window.setInterval(refreshTimer, 125);
   render();
+  void lobby.restore();
 }

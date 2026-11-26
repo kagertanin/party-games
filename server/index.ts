@@ -7,6 +7,8 @@ import { promisify } from "node:util";
 import { gzip } from "node:zlib";
 import { Room, Server, type Client } from "@colyseus/core";
 import { WebSocketTransport } from "@colyseus/ws-transport";
+import { SURVEY_ROOM } from "../shared/survey-online.js";
+import { SurveyRoom } from "./survey-room.js";
 import {
   act,
   addPlayer,
@@ -198,6 +200,7 @@ export async function startServer(port = Number(process.env.PORT || 2567)) {
     transport: new WebSocketTransport({ server: http, maxPayload: 16_384 }),
   });
   server.define("hat", HatRoom);
+  server.define(SURVEY_ROOM, SurveyRoom);
   await server.listen(port, "0.0.0.0");
   return server;
 }

@@ -19,12 +19,12 @@ export type TurnResult = Readonly<{
   answerIndex?: number;
 }>;
 
-const TEAMS = ["Яблоки", "Апельсины", "Сливы"];
+export const SURVEY_TEAM_NAMES = ["Яблоки", "Апельсины", "Сливы"] as const;
 const MIN_TEAMS = 2;
 const MIN_TEAM_SIZE = 2;
 const MAX_TEAM_SIZE = 5;
 export const MIN_SURVEY_PLAYERS = MIN_TEAMS * MIN_TEAM_SIZE;
-export const MAX_SURVEY_PLAYERS = TEAMS.length * MAX_TEAM_SIZE;
+export const MAX_SURVEY_PLAYERS = SURVEY_TEAM_NAMES.length * MAX_TEAM_SIZE;
 export const MAX_ROUNDS = 2;
 const MAX_ANSWER_LENGTH = 80;
 
@@ -32,7 +32,7 @@ export function surveyTeamCounts(playerCount: number): number[] {
   if (!Number.isInteger(playerCount)) return [];
 
   const counts: number[] = [];
-  for (let count = MIN_TEAMS; count <= TEAMS.length; count++) {
+  for (let count = MIN_TEAMS; count <= SURVEY_TEAM_NAMES.length; count++) {
     if (playerCount >= count * MIN_TEAM_SIZE && playerCount <= count * MAX_TEAM_SIZE) {
       counts.push(count);
     }
@@ -111,6 +111,7 @@ export class SurveyGame {
     private readonly random: () => number = Math.random,
     readonly questionLimit = questions.length,
     teamCount?: number,
+    roster?: readonly (readonly string[])[],
   ) {
     const teamCounts = surveyTeamCounts(playerCount);
     const count = teamCount ?? teamCounts.at(-1);
@@ -126,11 +127,18 @@ export class SurveyGame {
     if (!Number.isInteger(questionLimit) || questionLimit < 1 || questionLimit > questions.length) {
       throw new Error("Неверное число вопросов в партии.");
     }
+    if (roster && roster.length !== count) {
+      throw new Error("Состав не соответствует числу команд.");
+    }
 
     let nextPlayer = 1;
-    this.teams = TEAMS.slice(0, count).map((name, team) => {
+    this.teams = SURVEY_TEAM_NAMES.slice(0, count).map((name, team) => {
       const size = Math.floor(playerCount / count) + Number(team < playerCount % count);
-      const players = Array.from({ length: size }, () => `Игрок ${nextPlayer++}`);
+      const members = roster?.[team];
+      if (members && members.length !== size) {
+        throw new Error("Состав не соответствует числу игроков в команде.");
+      }
+      const players = members ? [...members] : Array.from({ length: size }, () => `Игрок ${nextPlayer++}`);
       return { name, players, score: 0 };
     });
   }
