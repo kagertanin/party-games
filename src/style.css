@@ -1760,3 +1760,5 @@ footer {
   width: 34px;
   height: 2px;
 }
+
+.survey-entry { text-decoration: none; }
