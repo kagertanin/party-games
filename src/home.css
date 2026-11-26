@@ -1,0 +1,82 @@
+body {
+  margin: 0;
+  background: #ede7fb;
+}
+
+.patch-home {
+  box-sizing: border-box;
+  width: min(100%, 160rem);
+  margin-inline: auto;
+  padding: 3.9vw 0 min(5vw, 4rem);
+}
+
+.patch-home-brand {
+  width: min(34.7%, 46rem);
+  margin: 0 0 1.3vw 2.6%;
+}
+
+.patch-home img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.game-patches {
+  display: grid;
+  grid-template-columns: 510fr 345fr 355fr 375fr;
+  align-items: start;
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.game-patch {
+  display: block;
+  width: 100%;
+  border: 0;
+  border-radius: 0.75rem;
+  padding: 0;
+  background: transparent;
+}
+
+.game-patch:disabled {
+  opacity: 1;
+  cursor: not-allowed;
+}
+
+a.game-patch:focus-visible {
+  outline: 3px dashed #26205c;
+  outline-offset: -5px;
+}
+
+@media (hover: hover) and (prefers-reduced-motion: no-preference) {
+  a.game-patch {
+    transition: transform 150ms ease;
+  }
+
+  a.game-patch:hover {
+    transform: translateY(-4px);
+  }
+}
+
+@media (max-width: 48rem) {
+  .patch-home {
+    width: min(100%, 37rem);
+    padding: 1.5rem 0.75rem 1.75rem;
+  }
+
+  .patch-home-brand {
+    width: min(78%, 20rem);
+    margin: 0 0 1.125rem 0.125rem;
+  }
+
+  .game-patches {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.5rem;
+  }
+
+  .game-patch img {
+    aspect-ratio: 3 / 4;
+    object-fit: contain;
+  }
+}

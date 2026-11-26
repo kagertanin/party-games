@@ -2,12 +2,17 @@ const app = document.querySelector<HTMLDivElement>("#app")!;
 
 async function loadGame() {
   try {
-    if (new URLSearchParams(location.search).get("game") === "survey") {
+    const params = new URLSearchParams(location.search);
+    if (params.get("game") === "survey") {
       document.title = "Сто к одному · Party Games";
       const { mountSurveyDemo } = await import("./survey-entry");
       mountSurveyDemo(app);
-    } else {
+    } else if (params.has("room") || params.get("game") === "hat") {
+      document.title = "Шляпа · Party Games";
       await import("./main");
+    } else {
+      const { mountHome } = await import("./home");
+      mountHome(app);
     }
   } catch (error) {
     console.error("Не удалось загрузить игру", error);
