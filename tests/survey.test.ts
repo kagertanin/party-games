@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { SurveyGame, TurnReadiness, type Question } from "../src/survey/survey";
 import { renderTurnSpiral } from "../src/survey/turn-spiral";
-import { getTurnTiming } from "../src/survey/turn-timing";
+import { getReadinessClockAtMs, getTurnTiming, READINESS_MS } from "../src/survey/turn-timing";
 
 const question: Question = {
   prompt: "Что берут с собой на пикник?",
@@ -91,9 +91,19 @@ test("only the first circuit of the game has three minutes and a delayed countdo
   assert.deepEqual(getTurnTiming(0, 2, 2), standardTiming);
 });
 
+test("only the opening readiness timer hides its first ten seconds", () => {
+  assert.equal(READINESS_MS, 20_000);
+  assert.equal(getReadinessClockAtMs(0, 0, 3), 10_000);
+  assert.equal(getReadinessClockAtMs(0, 2, 3), 10_000);
+  assert.equal(getReadinessClockAtMs(0, 3, 3), 0);
+  assert.equal(getReadinessClockAtMs(0, 5, 3), 0);
+  assert.equal(getReadinessClockAtMs(1, 0, 3), 0);
+  assert.equal(getReadinessClockAtMs(2, 0, 3), 0);
+});
+
 test("readiness starts the turn as soon as all teammates confirm", () => {
   const readiness = new TurnReadiness(3, 1_000);
-  assert.equal(readiness.remaining(1_000), 10_000);
+  assert.equal(readiness.remaining(1_000), 20_000);
   assert.equal(readiness.confirm(0, 1_100), false);
   assert.equal(readiness.confirm(0, 1_200), false);
   assert.equal(readiness.count, 1);
@@ -107,14 +117,15 @@ test("readiness starts the turn as soon as all teammates confirm", () => {
   assert.throws(() => readiness.confirm(3, 1_500), RangeError);
 });
 
-test("readiness expires ten seconds after it starts even when teammates wait", () => {
+test("readiness expires twenty seconds after it starts even when teammates wait", () => {
   const readiness = new TurnReadiness(3, 50_000);
   readiness.confirm(0, 51_000);
-  assert.equal(readiness.remaining(59_999), 1);
-  assert.equal(readiness.shouldStart(59_999), false);
-  assert.equal(readiness.shouldStart(60_000), true);
+  assert.equal(readiness.remaining(60_000), 10_000);
+  assert.equal(readiness.remaining(69_999), 1);
+  assert.equal(readiness.shouldStart(69_999), false);
+  assert.equal(readiness.shouldStart(70_000), true);
   assert.equal(readiness.remaining(80_000), 0);
-  assert.equal(readiness.confirm(1, 60_001), true);
+  assert.equal(readiness.confirm(1, 70_001), true);
   assert.equal(readiness.isReady(1), false);
   assert.equal(readiness.count, 1);
   assert.throws(() => new TurnReadiness(0, 50_000), RangeError);
@@ -193,6 +204,65 @@ test("proposals and votes are separate; members can switch their single vote", (
   assert.equal(game.votes.size, 0);
   assert.equal(game.hasProposed(0), false);
   assert.equal(game.activeTeam, 1);
+});
+
+test("confirmation uses a stable eligible proposal until all votes or the leaders change", () => {
+  let draws = 0;
+  const game = new SurveyGame([question], 10, () => ++draws === 2 ? 0 : 0.9);
+  assert.equal(game.confirmationCandidate(true), undefined);
+
+  game.propose(0, "Еда");
+  game.propose(1, "Плед");
+  game.propose(2, "Мяч");
+  assert.equal(game.confirmationCandidate(false), undefined);
+  const partialCandidate = game.confirmationCandidate(true);
+  assert.equal(partialCandidate?.text, "Мяч");
+  assert.equal(game.confirmationCandidate(true), partialCandidate);
+  assert.equal(draws, 1);
+
+  game.vote(0, 0);
+  game.vote(1, 1);
+  game.vote(2, 0);
+  assert.equal(game.confirmationCandidate(false), undefined);
+  assert.equal(game.confirmationCandidate(true), partialCandidate);
+  assert.equal(draws, 1);
+
+  game.vote(3, 1);
+  const tiedLeader = game.confirmationCandidate(false);
+  assert.equal(tiedLeader?.text, "Еда");
+  assert.equal(game.confirmationCandidate(true), tiedLeader);
+  assert.equal(draws, 2);
+
+  game.vote(3, 2);
+  assert.equal(game.confirmationCandidate(true), tiedLeader);
+  assert.equal(draws, 2);
+  game.vote(0, 1);
+  assert.equal(game.confirmationCandidate(true)?.text, "Плед");
+  game.vote(2, 2);
+  assert.equal(game.confirmationCandidate(true)?.text, "Мяч");
+  assert.equal(draws, 3);
+});
+
+test("manual confirmation submits the exact proposal while timeout still uses the votes", () => {
+  const game = new SurveyGame([question], 10, () => 0.9);
+  game.propose(0, "Еда");
+  game.propose(1, "Плед");
+  game.vote(0, 0);
+  const candidate = game.confirmationCandidate(true);
+  assert.equal(candidate?.text, "Плед");
+  assert.throws(() => game.finishTurn(100));
+  assert.equal(game.lastAnswer, null);
+  assert.equal(game.confirmationCandidate(true), candidate);
+  game.finishTurn(candidate!.id);
+  assert.deepEqual(game.lastAnswer, { team: 0, text: "Плед", points: 20, kind: "hit", answerIndex: 1 });
+  assert.equal(game.confirmationCandidate(true), undefined);
+
+  game.propose(0, "Еда");
+  game.propose(1, "Вода");
+  game.vote(0, 0);
+  assert.equal(game.confirmationCandidate(true)?.text, "Вода");
+  game.finishTurn();
+  assert.deepEqual(game.lastAnswer, { team: 1, text: "Еда", points: 25, kind: "hit", answerIndex: 0 });
 });
 
 test("a tied vote selects from tied leaders; blank votes pass and previously opened aliases give no points", () => {

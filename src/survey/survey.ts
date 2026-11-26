@@ -1,3 +1,5 @@
+import { READINESS_MS } from "./turn-timing";
+
 export type Question = {
   prompt: string;
   answers: readonly {
@@ -27,7 +29,7 @@ export class TurnReadiness {
   constructor(
     private readonly teamSize: number,
     private readonly startedAt: number,
-    private readonly durationMs = 10_000,
+    private readonly durationMs = READINESS_MS,
   ) {
     if (!Number.isInteger(teamSize) || teamSize < 1) {
       throw new RangeError("В команде должен быть хотя бы один игрок.");
@@ -83,6 +85,7 @@ export class SurveyGame {
   private readonly completedTurns: TurnResult[] = [];
   private readonly currentProposals: Proposal[] = [];
   private readonly submitted = new Set<number>();
+  private manualCandidate: { key: string; proposal: Proposal | undefined } | undefined;
 
   constructor(
     private readonly questions: readonly Question[],
@@ -148,15 +151,29 @@ export class SurveyGame {
 
   vote(player: number, proposalId: number): void {
     this.requireCurrentPlayer(player);
-    if (!this.currentProposals.some(({ id }) => id === proposalId)) {
-      throw new Error("Выберите одну из предложенных версий.");
-    }
+    this.requireCurrentProposal(proposalId);
     this.votes.set(player, proposalId);
   }
 
-  finishTurn(): void {
+  confirmationCandidate(timerVisible: boolean): Proposal | undefined {
+    if (this.phase !== "turn") return undefined;
+    const allVoted = this.votes.size === this.teams[this.activeTeam].players.length;
+    if (!allVoted && !timerVisible) return undefined;
+
+    const options = allVoted ? this.leadingProposals() : this.currentProposals;
+    const key = `${allVoted}:${options.map(({ id }) => id).join(",")}`;
+    if (this.manualCandidate?.key !== key) {
+      this.manualCandidate = { key, proposal: this.pickProposal(options) };
+    }
+    return this.manualCandidate.proposal;
+  }
+
+  finishTurn(confirmedProposalId?: number): void {
     if (this.phase !== "turn") return;
-    this.completedTurns.push(this.scoreTurn());
+    const proposal = confirmedProposalId === undefined
+      ? this.pickProposal(this.leadingProposals())
+      : this.requireCurrentProposal(confirmedProposalId);
+    this.completedTurns.push(this.scoreTurn(proposal));
     this.resetBallot();
     if (this.opened.size === this.question.answers.length ||
         this.turnIndex + 1 === this.teams.length * MAX_ROUNDS) {
@@ -186,9 +203,14 @@ export class SurveyGame {
     }
   }
 
-  private scoreTurn(): TurnResult {
+  private requireCurrentProposal(proposalId: number): Proposal {
+    const proposal = this.currentProposals.find(({ id }) => id === proposalId);
+    if (!proposal) throw new Error("Выберите одну из предложенных версий.");
+    return proposal;
+  }
+
+  private scoreTurn(proposal: Proposal | undefined): TurnResult {
     const team = this.activeTeam;
-    const proposal = this.pickProposal();
     if (!proposal) return { team, text: "", points: 0, kind: "pass" };
 
     const text = proposal.text;
@@ -205,18 +227,22 @@ export class SurveyGame {
     return { team, text, points, kind: "hit", answerIndex };
   }
 
-  private pickProposal(): Proposal | undefined {
-    if (this.votes.size === 0) return undefined;
+  private leadingProposals(): Proposal[] {
+    if (this.votes.size === 0) return [];
     const counts = new Map<number, number>();
     for (const id of this.votes.values()) counts.set(id, (counts.get(id) ?? 0) + 1);
     const mostVotes = Math.max(...counts.values());
-    const leaders = this.currentProposals.filter(({ id }) => counts.get(id) === mostVotes);
-    return leaders.length === 1 ? leaders[0] : leaders[Math.floor(this.random() * leaders.length)];
+    return this.currentProposals.filter(({ id }) => counts.get(id) === mostVotes);
+  }
+
+  private pickProposal(options: readonly Proposal[]): Proposal | undefined {
+    return options.length <= 1 ? options[0] : options[Math.floor(this.random() * options.length)];
   }
 
   private resetBallot(): void {
     this.currentProposals.length = 0;
     this.votes.clear();
     this.submitted.clear();
+    this.manualCandidate = undefined;
   }
 }
