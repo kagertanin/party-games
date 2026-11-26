@@ -1,0 +1,147 @@
+@import "@fontsource-variable/rubik/wght-italic.css";
+
+.survey-app {
+  --fabric-ink: #251764;
+  --fabric-muted: #655982;
+  --fabric-cream: #fff5e7;
+  --fabric-gold: #ffe6a8;
+  --fabric-blue: #e3e5f4;
+  --fabric-green: #e5ebd3;
+  --fabric-lilac: #e7ddf3;
+  --fabric-edge: url("./art/fabric-edge.webp");
+  --fabric-weave: url("./art/weave.webp");
+  --fabric-hatch: url("./art/hatch.webp");
+  --survey-paper: var(--fabric-cream);
+  --survey-ink: var(--fabric-ink);
+  --survey-muted: var(--fabric-muted);
+  --survey-border: #a49ab9;
+  --survey-accent: #322477;
+  --survey-action: #30216e;
+  --survey-accent-soft: var(--fabric-gold);
+  --survey-blue: #2e246e;
+  --survey-display: "Rubik Variable", "Rubik", Arial, sans-serif;
+  font-family: var(--survey-display);
+}
+
+.survey-app,
+.survey-app.is-landing {
+  --survey-background: #ede7fb;
+  background: radial-gradient(ellipse at 50% 38%, #f4effc, transparent 76%), var(--survey-background);
+}
+
+.survey-team-0 {
+  --team: #557930;
+  --team-ink: #3d5b20;
+  --team-soft: #eef1dc;
+  --team-card: var(--fabric-green);
+}
+.survey-team-1 {
+  --team: #b75c33;
+  --team-ink: #864326;
+  --team-soft: #ffebdd;
+  --team-card: #f9e1cb;
+}
+.survey-team-2 {
+  --team: #8257a7;
+  --team-ink: #5d397e;
+  --team-soft: #f0e6f6;
+  --team-card: var(--fabric-lilac);
+}
+
+.survey-app .survey-header {
+  width: min(100%, 109rem);
+  margin: 0 auto;
+  padding: .65rem clamp(.85rem, 2.4vw, 2.75rem);
+  min-height: 4.3rem;
+  gap: clamp(.55rem, 1.35vw, 1.6rem);
+  border: 0;
+  color: var(--fabric-ink);
+}
+.survey-app.is-landing .survey-header {
+  width: min(100%, 110rem);
+  margin: 0 auto;
+  padding: clamp(.65rem, 1vw, 1.1rem) clamp(1rem, 3vw, 3.4rem);
+}
+.survey-app .survey-header .survey-brand { padding: 0; border: 0; }
+.survey-brand img {
+  display: block;
+  width: clamp(7.7rem, 15vw, 15rem);
+  height: auto;
+}
+.is-landing .survey-brand img { width: clamp(9rem, 23.5vw, 24.5rem); }
+.survey-header > span,
+.survey-app .survey-header > a:last-child:not(.survey-brand) {
+  position: relative;
+  padding: .23em .66em;
+  border-radius: 1em .7em .8em 1em;
+  background: var(--fabric-weave) 0 0 / 72px repeat, var(--fabric-cream);
+  box-shadow: 0 2px 3px #32215226;
+  color: var(--fabric-ink);
+  font: italic 730 clamp(.95rem, 1.75vw, 1.9rem)/1.24 var(--survey-display);
+  letter-spacing: -.045em;
+}
+.survey-header > span::before,
+.survey-app .survey-header > a:last-child:not(.survey-brand)::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-image: var(--fabric-edge) 26 / 8px / 3px round;
+  pointer-events: none;
+}
+.survey-app.is-landing .survey-header > a:last-child {
+  padding: .26em .7em;
+  background-color: #e4e8dc;
+  font-size: clamp(1.15rem, 2.6vw, 2.85rem);
+}
+.survey-app .survey-view-choice { font-weight: 570; font-size: .875rem; }
+.survey-app :is(button, a, select, input):focus-visible {
+  outline: 3px solid #5542a5;
+  outline-offset: 4px;
+}
+.survey-app :is(.survey-view-choice, .survey-start-form, .survey-ballot-voter) select {
+  appearance: none;
+  color: var(--fabric-ink);
+  border: 1.5px solid #685792;
+  background-color: #fffbf5;
+  background-image: linear-gradient(45deg, transparent 50%, var(--fabric-ink) 50%),
+    linear-gradient(135deg, var(--fabric-ink) 50%, transparent 50%);
+  background-position: right .85rem center, right .56rem center;
+  background-size: .31rem .31rem;
+  background-repeat: no-repeat;
+  padding-inline: .65rem 1.7rem;
+  border-radius: .55rem .7rem .55rem .65rem;
+}
+.survey-app .survey-button {
+  color: var(--fabric-ink);
+  border-color: #67588b;
+  background: var(--fabric-weave) 0 0 / 72px repeat, var(--fabric-cream);
+  font-weight: 680;
+  font-style: italic;
+  border-radius: .65rem .8rem .58rem .75rem;
+}
+.survey-app .survey-button.primary-action,
+.survey-app .survey-form .survey-button {
+  background: var(--fabric-weave) 0 0 / 72px repeat, var(--survey-action);
+  color: #fff7e9;
+  border-color: #302168;
+}
+.survey-app .survey-button.primary-action:not(:disabled):hover,
+.survey-app .survey-form .survey-button:not(:disabled):hover { background-color: #47378b; }
+.survey-app .survey-button.secondary-action:hover:not(:disabled) { background-color: var(--fabric-gold); }
+.survey-start-dialog {
+  border: 10px solid transparent;
+  border-image: var(--fabric-edge) 26 / 14px round;
+  background: var(--fabric-weave) 0 0 / 72px repeat, var(--fabric-cream);
+  border-radius: 1rem 1.3rem 1rem 1.2rem;
+  box-shadow: 0 .6rem 2.8rem #28174c4a;
+}
+.survey-start-dialog::backdrop { background: rgb(34 23 62 / 43%); }
+.survey-start-form h2 { font-style: italic; }
+@media (max-width: 38rem) {
+  .survey-app .survey-header { gap: .47rem; min-height: 3rem; }
+  .survey-brand img { width: clamp(5rem, 19.5vw, 8rem); }
+  .is-landing .survey-brand img { width: clamp(8rem, 37vw, 11rem); }
+  .survey-app .survey-header > span,
+  .survey-app .survey-header > a:last-child:not(.survey-brand) { font-size: .93rem; }
+  .survey-app.is-landing .survey-header > a:last-child { font-size: 1.12rem; }
+}

@@ -1,4 +1,7 @@
 import "./demo.css";
+import gamesLogo from "../home-art/logo.webp";
+import surveyTitlePatch from "./art/survey-title.webp";
+import beachPatch from "./art/beach.webp";
 import { MAX_ROUNDS, MAX_SURVEY_PLAYERS, MIN_SURVEY_PLAYERS, SurveyGame, TurnReadiness, type TurnResult } from "./survey";
 import { demoGuesses, questions } from "./questions";
 import { renderTurnSpiral } from "./turn-spiral";
@@ -48,6 +51,7 @@ export function mountSurveyDemo(app: HTMLElement) {
   let liveVotingOnly = false;
   const lobby = createSurveyLobby(app, updateOnline);
   document.title = "Сто к одному · Party Games";
+  document.querySelector('meta[name="theme-color"]')?.setAttribute("content", "#ede7fb");
 
   const liveMatch = () => lobby.view?.match;
   const timeLeft = () => Math.max(0, (liveMatch() ? liveDeadline : deadline) - performance.now());
@@ -322,7 +326,7 @@ export function mountSurveyDemo(app: HTMLElement) {
   function setup() {
     return `<main class="survey-wrap survey-setup">
       <section class="survey-intro" aria-labelledby="survey-title">
-        <h1 id="survey-title"><span class="survey-title-line">Сто к</span> <span class="survey-title-line">одному</span></h1>
+        <h1 id="survey-title"><img src="${surveyTitlePatch}" alt="Сто к одному" width="755" height="134"></h1>
         <p class="survey-player-range">${MIN_SURVEY_PLAYERS}–${MAX_SURVEY_PLAYERS} игроков</p>
         <p class="survey-team-limit">До 3 команд, до 5 в каждой</p>
         <p class="survey-lead">Угадайте самые популярные ответы из опроса.</p>
@@ -331,7 +335,7 @@ export function mountSurveyDemo(app: HTMLElement) {
           <button class="survey-button secondary-action" data-survey="demo" type="button">Демо</button>
         </div>
       </section>
-      <img class="survey-illustration" src="/survey-illustration.webp" width="950" height="712"
+      <img class="survey-illustration" src="${beachPatch}" width="773" height="716"
         alt="На вопрос «Что берут на пляж?» игрок отвечает «Крем». Третья карточка открывается и приносит его команде 18 очков.">
     </main>`;
   }
@@ -359,7 +363,7 @@ export function mountSurveyDemo(app: HTMLElement) {
     app.classList.add("survey-app");
     app.classList.toggle("is-landing", !match && !room);
     app.innerHTML = `
-      <header class="survey-header"><a href="./" class="survey-brand">Party Games</a>${match || room ? "<span>Сто к одному</span>" : ""}
+      <header class="survey-header"><a href="./" class="survey-brand"><img src="${gamesLogo}" width="550" height="204" alt="И.Г.Р.Ы."></a>${match || room ? "<span>Сто к одному</span>" : ""}
         ${!room && isDemo && game && game.phase !== "results" ? `<label class="survey-view-choice">Команда в демо
           <select id="survey-view-team">
             ${game.teams.map((team, index) => `<option value="${index}" ${viewingTeam === index ? "selected" : ""}>${escape(team.name)}</option>`).join("")}

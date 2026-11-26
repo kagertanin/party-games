@@ -1,0 +1,169 @@
+/* The invitation form and the waiting room share the game's linen patches. */
+.survey-online-lobby,
+.survey-online-team {
+  --room-fringe: 14px;
+  --room-overhang: 5px;
+  border: 2px solid transparent;
+  border-image: var(--fabric-edge) 26 / var(--room-fringe) / var(--room-overhang) round;
+  background: var(--fabric-weave) 0 0 / 72px repeat, var(--fabric-cream);
+  background-clip: padding-box;
+  border-radius: 1.35rem 1.1rem 1.3rem .9rem;
+  color: var(--fabric-ink);
+  box-shadow: none;
+  filter: drop-shadow(0 .24rem .2rem rgb(48 28 81 / 14%));
+}
+
+.survey-start-dialog.survey-online-dialog {
+  width: min(36rem, calc(100% - 1.5rem));
+  padding: clamp(.85rem, 3.5vw, 1.8rem);
+}
+
+
+.survey-online-dialog .survey-start-form { gap: 1.2rem; }
+
+.survey-online-dialog .survey-start-form h2,
+.survey-online-heading h1,
+.survey-online-team h2 {
+  color: var(--fabric-ink);
+  font-family: var(--survey-display);
+  font-weight: 800;
+  font-style: italic;
+  letter-spacing: -.035em;
+}
+
+.survey-online-dialog .survey-start-form h2 {
+  font-size: clamp(1.75rem, 5vw, 2.55rem);
+  line-height: 1.08;
+}
+
+.survey-online-dialog label,
+.survey-online-code {
+  min-width: 0;
+  color: var(--fabric-ink);
+  font-weight: 650;
+}
+
+.survey-online-dialog .survey-online-modes { align-items: stretch; }
+
+.survey-online-modes .survey-button[aria-pressed="true"],
+.survey-online-modes .survey-button[aria-pressed="true"]:hover:not(:disabled) {
+  border-color: var(--fabric-ink);
+  background: var(--fabric-weave) 0 0 / 72px repeat, var(--fabric-gold);
+  box-shadow: inset 0 0 0 1px var(--fabric-ink);
+  color: var(--fabric-ink);
+}
+
+.survey-online-dialog input,
+.survey-online-code input {
+  min-width: 0;
+  color: var(--fabric-ink);
+  border: 1.5px solid var(--fabric-ink);
+  border-radius: .65rem .8rem .55rem .6rem;
+  background: #fffdf6;
+  padding: .6rem .8rem;
+}
+
+.survey-online-dialog input::placeholder { color: var(--fabric-muted); }
+.survey-online-dialog .survey-online-error,
+.survey-app .survey-online-state.survey-online-error { color: #9a2c3c; }
+
+.survey-wrap.survey-online-lobby {
+  width: min(69rem, calc(100% - 2rem));
+  flex: 0 0 auto;
+  margin: clamp(1.15rem, 3.1vw, 3.2rem) auto 2rem;
+  padding: clamp(1rem, 3vw, 2.45rem);
+}
+
+.survey-online-heading {
+  align-items: center;
+  margin-bottom: clamp(1.25rem, 3vw, 2.2rem);
+}
+
+.survey-online-heading h1 {
+  font-size: clamp(2.1rem, 4vw, 3.7rem);
+  line-height: 1.06;
+}
+
+.survey-online-heading .survey-muted,
+.survey-online-footer .survey-muted,
+.survey-online-team li span,
+.survey-online-team .survey-online-empty { color: var(--fabric-muted); }
+
+.survey-online-code input {
+  width: 100%;
+  font-weight: 750;
+  color: var(--fabric-ink);
+}
+
+.survey-online-invites {
+  width: min(100%, 24rem);
+  padding: .8rem 1rem .45rem;
+  border: 1px dashed color-mix(in srgb, var(--fabric-ink) 45%, transparent);
+  border-radius: .85rem .65rem .9rem .75rem;
+  background: var(--fabric-weave) 0 0 / 72px repeat, var(--fabric-blue);
+}
+
+.survey-online-copy .survey-button {
+  flex: 1 1 auto;
+  padding-inline: .6rem;
+}
+
+.survey-online-teams { gap: clamp(.8rem, 1.8vw, 1.25rem); }
+.survey-online-team.survey-team-0 { --room-team-cloth: var(--fabric-green); }
+.survey-online-team.survey-team-1 { --room-team-cloth: #fae3cf; }
+.survey-online-team.survey-team-2 { --room-team-cloth: var(--fabric-lilac); }
+
+.survey-online-team {
+  --room-fringe: 8px;
+  --room-overhang: 3px;
+  min-width: 0;
+  padding: clamp(.55rem, 1.5vw, .95rem);
+  background-color: var(--room-team-cloth);
+}
+.survey-online-team h2 {
+  gap: .55rem;
+  margin: 0 0 .8rem;
+  font-size: clamp(1.3rem, 2.1vw, 1.7rem);
+  line-height: 1.15;
+}
+
+.survey-online-team h2 .survey-fruit {
+  flex: 0 0 auto;
+  width: 1.55em;
+  height: 1.55em;
+  color: var(--fabric-ink);
+}
+
+.survey-online-team li {
+  min-height: 2.7rem;
+  background: color-mix(in srgb, var(--fabric-cream) 87%, transparent);
+  color: var(--fabric-ink);
+  border: 1px solid color-mix(in srgb, var(--fabric-ink) 18%, transparent);
+  border-radius: .55rem .7rem .5rem .6rem;
+}
+
+.survey-online-team li strong { max-width: 100%; }
+.survey-online-team .survey-online-empty {
+  border: 1px dashed color-mix(in srgb, var(--fabric-ink) 31%, transparent);
+  background: transparent;
+}
+.survey-online-footer {
+  margin-top: clamp(1.2rem, 3vw, 2rem);
+  border-top: 1px dashed color-mix(in srgb, var(--fabric-ink) 32%, transparent);
+  padding-top: 1rem;
+}
+
+@media (max-width: 41rem) {
+  .survey-wrap.survey-online-lobby {
+    width: calc(100% - 1rem);
+    margin-top: .75rem;
+  }
+  .survey-online-invites { width: 100%; }
+  .survey-online-heading { gap: .95rem; }
+}
+@media (max-width: 25rem) {
+  .survey-online-settings { grid-template-columns: 1fr; }
+  .survey-online-dialog .survey-online-modes { gap: .4rem; }
+  .survey-online-dialog .survey-online-modes .survey-button { padding-inline: .4rem; }
+  .survey-online-footer .survey-dialog-actions { justify-content: flex-start; }
+}

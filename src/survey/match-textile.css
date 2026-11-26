@@ -1,0 +1,423 @@
+/* The same fabric surfaces dress the shared match view in the demo and in rooms. */
+.survey-match,
+.survey-results {
+  --patch-shadow: 0 3px 6px -3px #30206459;
+  --patch-shape: 1.2rem 1.5rem 1.1rem 1.35rem / 1.35rem 1.1rem 1.45rem 1.15rem;
+  --ink-line: #332770;
+  font-style: italic;
+}
+
+/* Fruit skins take their ink and contrast from the team's shared palette. */
+:is(.survey-match, .survey-results) .survey-fruit {
+  --fruit-fill: color-mix(in srgb, var(--team) 48%, var(--team-soft));
+}
+
+.survey-match {
+  gap: clamp(.9rem, 1.55vw, 1.55rem);
+  padding-top: clamp(.62rem, 1.1vw, 1.2rem);
+}
+
+.survey-main,
+.survey-sidebar:has(.survey-turn-progress),
+.survey-results {
+  position: relative;
+  padding: clamp(.9rem, 1.55vw, 1.75rem);
+  border: 1px solid #eee0cc;
+  border-radius: var(--patch-shape);
+  background: var(--fabric-weave) repeat, var(--fabric-cream);
+  background-size: 72px;
+  box-shadow: var(--patch-shadow);
+}
+
+/* A transparent nine-slice lays actual loose linen threads around each patch.
+   Keeping it above the background preserves the rounded edges and focus rings. */
+:is(.survey-main, .survey-sidebar:has(.survey-turn-progress), .survey-results,
+    .survey-team-section, .survey-question-option, .survey-board li, .survey-ready,
+    .survey-proposal, .survey-resolution)::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border: 1px solid transparent;
+  border-image: var(--fabric-edge) 26 / 11px / 3px round;
+  border-radius: inherit;
+  pointer-events: none;
+}
+
+:is(.survey-main, .survey-sidebar:has(.survey-turn-progress), .survey-results)::before {
+  border-image-width: 14px;
+  border-image-outset: 4px;
+}
+
+.survey-team-list { gap: .8rem; }
+
+.survey-team-section,
+.survey-team-section:is(.is-current, .is-expanded),
+.survey-team-section.is-own.is-expanded {
+  position: relative;
+  background: var(--fabric-weave) repeat, var(--team-soft);
+  background-size: 72px;
+  border: 1px solid color-mix(in srgb, var(--team) 40%, var(--fabric-cream));
+  border-radius: 1rem 1.18rem .94rem 1.05rem;
+  box-shadow: var(--patch-shadow);
+}
+
+.survey-team-section.is-current,
+.survey-team-section.is-current.is-expanded {
+  border-color: var(--team);
+  box-shadow: inset 0 0 0 1.5px var(--team), var(--patch-shadow);
+}
+
+.survey-team-section.is-own.is-expanded { background-color: var(--team-card); }
+
+.survey-team-section .survey-team-toggle {
+  min-height: clamp(3rem, 4.25vw, 4.25rem);
+  padding: .55rem clamp(.55rem, 1vw, 1rem);
+}
+
+.survey-team-section.is-expanded .survey-team-toggle { padding-block: .62rem; }
+
+.survey-team-label {
+  margin-bottom: .13rem;
+  color: var(--fabric-ink);
+  font-size: clamp(.86rem, 1.12vw, 1.04rem);
+}
+
+.survey-team-name,
+.survey-team-section.is-own.is-expanded .survey-team-name {
+  font-size: clamp(1.05rem, 1.73vw, 1.75rem);
+  line-height: 1.15;
+}
+
+.survey-team-name .survey-fruit {
+  width: 1.5em;
+  height: 1.5em;
+}
+
+.survey-team-name .survey-fruit,
+.survey-results .survey-fruit,
+.survey-spiral-fruit { color: var(--fabric-ink); }
+
+.survey-rival-score,
+.survey-team-section.is-own.is-expanded .survey-rival-score {
+  min-width: 2.1em;
+  padding: .05em .2em;
+  border: 1.5px solid var(--fabric-ink);
+  border-radius: .35em .42em .32em .4em;
+  background: var(--fabric-weave) repeat, var(--fabric-cream);
+  background-size: 72px;
+  font-size: clamp(1.05rem, 1.62vw, 1.55rem);
+  text-align: center;
+}
+
+.survey-team-section .survey-roster { margin-bottom: .65rem; }
+
+.survey-member {
+  padding: .2rem .44rem;
+  min-height: clamp(2.1rem, 2.65vw, 2.7rem);
+}
+
+.survey-member[aria-pressed="true"],
+.survey-member.is-selected {
+  background: color-mix(in srgb, var(--fabric-cream) 76%, transparent);
+  box-shadow: inset 0 0 0 1px #33277028;
+}
+
+.survey-member-avatar,
+.survey-roster > li:nth-child(n) .survey-member-avatar {
+  width: 1.58em;
+  border: 1px solid #43348178;
+  border-radius: 48% 53% 46% 50%;
+  color: var(--fabric-ink);
+  background: var(--fabric-cream);
+}
+
+.survey-responding { font-weight: 680; }
+.survey-member-you { color: var(--fabric-muted); }
+.survey-spiral-track { stroke: var(--ink-line); }
+.survey-spiral-progress { stroke: var(--fabric-ink); stroke-width: 3.4; }
+.survey-spiral-connector { stroke: #8173a4; stroke-width: 1.3; }
+.survey-spiral-node:not(.is-current, .is-played) .survey-fruit {
+  --fruit-fill: var(--fabric-cream);
+  color: var(--team-ink);
+}
+.survey-spiral-node:not(.is-current, .is-played) .survey-fruit-body { fill: var(--fruit-fill); }
+.survey-spiral-ring { fill: var(--fabric-cream); }
+.survey-turn-progress { margin-top: clamp(.75rem, 1.2vw, 1.2rem); }
+
+.survey-question h1,
+.survey-question-ballot h1 {
+  font: italic 700 clamp(1.75rem, 3.18vw, 3.35rem)/1.07 var(--survey-display);
+  letter-spacing: -.045em;
+}
+
+.survey-question-progress { --checkpoint-space: clamp(1.9rem, 3.3vw, 3.15rem); }
+.survey-question-node { background: var(--fabric-cream); border-color: var(--ink-line); }
+.survey-question-node:not(:first-child)::before {
+  background: repeating-linear-gradient(to right, #65578b 0 6px, transparent 6px 10px);
+}
+
+.survey-question-node:is(.is-current, .is-past) {
+  border-color: var(--fabric-ink);
+  background: var(--fabric-hatch), var(--fabric-ink);
+  background-size: 75px;
+}
+
+.survey-question-node.is-current::after { box-shadow: none; border-color: var(--ink-line); }
+
+.survey-question-ballot { gap: clamp(1rem, 1.75vw, 1.9rem); }
+
+.survey-ballot-choices { gap: clamp(.65rem, 1.15vw, 1.15rem); }
+
+.survey-question-option {
+  position: relative;
+  grid-template-columns: 1fr;
+  grid-template-rows: 1fr auto;
+  align-content: stretch;
+  justify-items: center;
+  gap: clamp(.8rem, 1.55vw, 1.55rem);
+  min-height: clamp(10.5rem, 18.4vw, 18.75rem);
+  padding: clamp(.8rem, 1.35vw, 1.5rem);
+  border: 1.5px solid #d6c9af;
+  border-radius: var(--patch-shape);
+  background: var(--fabric-weave) repeat, var(--fabric-cream);
+  background-size: 72px;
+  text-align: center;
+  box-shadow: var(--patch-shadow);
+}
+
+.survey-question-option:nth-child(1) { background-color: #eae1f3; }
+.survey-question-option:nth-child(2) { background-color: var(--fabric-blue); }
+
+.survey-question-option:is(.is-selected, [aria-pressed="true"]) {
+  background: var(--fabric-weave) repeat, var(--fabric-gold);
+  background-size: 72px;
+  border-color: var(--fabric-ink);
+  box-shadow: inset 0 0 0 1px var(--fabric-ink), var(--patch-shadow);
+}
+
+.survey-question-option-text {
+  font-size: clamp(1.1rem, 1.9vw, 1.94rem);
+  line-height: 1.11;
+  text-wrap: balance;
+}
+
+.survey-question-votes,
+.survey-question-option:is(.is-selected, [aria-pressed="true"]) .survey-question-votes {
+  min-width: 1.85em;
+  min-height: 1.85em;
+  padding: .05em .25em;
+  border: 1.5px solid var(--fabric-ink);
+  border-radius: 48% 55% 47% 52%;
+  background: var(--fabric-cream);
+  color: var(--fabric-ink);
+  font-size: clamp(1.06rem, 1.57vw, 1.5rem);
+}
+
+.survey-ballot-status {
+  width: 100%;
+  justify-content: space-between;
+  color: var(--fabric-ink);
+  font-weight: 650;
+}
+
+.survey-ballot-status > * {
+  padding: .28em .72em;
+  border: 1px dashed #9a92bc;
+  border-radius: .6em .7em .65em .5em;
+  background: var(--fabric-weave) repeat, var(--fabric-lilac);
+  background-size: 72px;
+}
+
+.survey-ballot-status .survey-ballot-clock {
+  background-color: var(--fabric-green);
+  color: var(--fabric-ink);
+}
+
+.survey-ballot-voter {
+  justify-self: start;
+  justify-content: start;
+  font-size: 1rem;
+  font-weight: 580;
+}
+
+.survey-ballot-voter select { border-color: var(--ink-line); }
+
+.survey-board li,
+.survey-board li.found,
+.survey-board li.unclaimed {
+  position: relative;
+  padding: .65rem;
+  border-width: 1px;
+  border-radius: .85rem 1rem .76rem 1.05rem / .95rem .72rem 1rem .82rem;
+  box-shadow: var(--patch-shadow);
+}
+
+.survey-board li.hidden-answer {
+  border-color: var(--ink-line);
+  background: var(--fabric-hatch) repeat, var(--fabric-ink);
+  background-size: 120px;
+  color: var(--fabric-cream);
+}
+
+.survey-board li.found {
+  background: var(--fabric-weave) repeat, var(--team-card);
+  background-size: 72px;
+}
+
+.survey-board li.unclaimed {
+  background: var(--fabric-weave) repeat, #f2ebe4;
+  background-size: 72px;
+}
+
+.survey-rank {
+  font: italic 770 clamp(2.6rem, 5.05vw, 5.2rem)/.95 var(--survey-display);
+}
+
+.survey-board li:is(.found, .unclaimed) {
+  grid-template-columns: minmax(0,1fr) auto;
+  align-content: center;
+  align-items: center;
+  gap: .24rem;
+}
+
+.survey-board li:is(.found, .unclaimed) .survey-rank,
+.survey-board li:is(.found, .unclaimed) .survey-points {
+  grid-row: 1;
+  min-width: 1.55em;
+  margin: 0;
+  padding: .05em .23em;
+  border: 1px solid currentColor;
+  border-radius: .28em .36em .29em .33em;
+  color: var(--fabric-ink);
+  font: italic 680 clamp(.84rem, 1.3vw, 1.25rem)/1.2 var(--survey-display);
+  text-align: center;
+}
+
+.survey-board li:is(.found, .unclaimed) .survey-rank { grid-column: 1; justify-self: start; }
+.survey-board li:is(.found, .unclaimed) .survey-points { grid-column: 2; justify-self: end; }
+
+.survey-board .survey-answer {
+  grid-area: 2 / 1 / auto / -1;
+  font-size: clamp(1rem, 1.57vw, 1.6rem);
+  line-height: 1.08;
+}
+
+.survey-panel .survey-ready,
+.survey-resolution {
+  position: relative;
+  background: var(--fabric-weave) repeat, var(--team-soft, var(--fabric-cream));
+  background-size: 72px;
+  border-radius: var(--patch-shape);
+}
+
+.survey-panel h2,
+.survey-step h3 { letter-spacing: -.035em; }
+
+.survey-form input { border-color: var(--ink-line); }
+.survey-form .survey-button { color: var(--fabric-cream); }
+.survey-step { padding-top: .5rem; border-top: 1px solid #887ba674; }
+
+.survey-proposal {
+  position: relative;
+  background: var(--fabric-weave) repeat, var(--fabric-cream);
+  background-size: 72px;
+  border-color: #b7a998;
+  box-shadow: var(--patch-shadow);
+}
+
+.survey-proposal[aria-pressed="true"] {
+  background: var(--fabric-weave) repeat, var(--fabric-gold);
+  background-size: 72px;
+  border-color: var(--fabric-ink);
+  box-shadow: inset 0 0 0 1px var(--fabric-ink), var(--patch-shadow);
+}
+
+.survey-votes { background: #e5deed; color: var(--fabric-ink); }
+.survey-proposal-voter { background-color: var(--team-soft); }
+.survey-proposal::before { border-image-width: 8px; border-image-outset: 2px; }
+
+.survey-app .survey-confirm-button {
+  border-color: var(--fabric-ink);
+  background: var(--fabric-ink);
+  color: var(--fabric-cream);
+}
+
+/* This is the existing hold meter; it must stay visible above its button face. */
+.survey-confirm-button::before { background: #6554a2; }
+
+.survey-ready-button.survey-button { background-color: var(--team); color: #fff9ed; }
+.survey-ready-button.survey-button:disabled { background-color: var(--team-soft); color: var(--team-ink); }
+.survey-panel .survey-turn-actions .survey-button { border-color: #b2a7c3; }
+.survey-flying-answer, .survey-flying-points { background-image: var(--fabric-weave); background-size: 72px; }
+
+.survey-results {
+  flex: none;
+  margin-block: clamp(1rem, 4.5vw, 4rem);
+  padding: clamp(1.35rem, 3.6vw, 3.75rem);
+}
+
+.survey-results ol { display: grid; gap: .7rem; }
+.survey-results li {
+  padding: .7rem .95rem;
+  border: 1px dashed color-mix(in srgb, var(--team) 60%, transparent);
+  border-radius: .65rem .85rem .7rem .62rem;
+  background: var(--fabric-weave) repeat, var(--team-soft);
+  background-size: 72px;
+  font-size: clamp(1.12rem, 2vw, 1.5rem);
+  font-weight: 620;
+}
+
+.survey-results h1,
+.survey-resolved-answer { font-style: italic; }
+
+@media (min-width: 761px) {
+  .survey-match {
+    grid-template-columns: minmax(15rem, .31fr) minmax(0, 1fr);
+  }
+  .survey-sidebar:has(.survey-turn-progress) {
+    padding-inline: clamp(.45rem, .75vw, .76rem);
+  }
+  .survey-team-section .survey-team-toggle {
+    gap: .35rem;
+    padding-inline: clamp(.42rem, .65vw, .72rem);
+  }
+  .survey-team-name,
+  .survey-team-section.is-own.is-expanded .survey-team-name {
+    gap: .32rem;
+    white-space: nowrap;
+  }
+  .survey-main:has(.survey-question-ballot) {
+    display: grid;
+    min-height: min(73dvh, 46rem);
+  }
+  .survey-question-ballot { align-content: space-evenly; }
+  .survey-sidebar:not(:has(.survey-turn-progress)) .survey-team-toggle {
+    min-height: clamp(3.6rem, 6.3vw, 6.3rem);
+  }
+  .survey-sidebar:not(:has(.survey-turn-progress)) .survey-member {
+    min-height: clamp(2.15rem, 3.05vw, 3.15rem);
+  }
+}
+
+@media (max-width: 760px) {
+  .survey-main { padding: .88rem .68rem; }
+  .survey-sidebar:has(.survey-turn-progress) { padding: .65rem; }
+  .survey-team-list { gap: .5rem; }
+  .survey-team-section .survey-team-toggle { min-height: 2.55rem; padding: .28rem .65rem; }
+  .survey-team-section.is-expanded .survey-team-toggle { padding-block: .35rem; }
+  .survey-team-name, .survey-team-section.is-own.is-expanded .survey-team-name { font-size: 1.15rem; }
+  .survey-team-label { font-size: .82rem; }
+  .survey-member { min-height: 2.05rem; padding-inline: .22rem; }
+  .survey-question h1, .survey-question-ballot h1 { font-size: clamp(1.55rem, 5.3vw, 2.4rem); }
+  .survey-spiral-layout.has-history { max-width: 16rem; }
+  .survey-board li, .survey-board li.found, .survey-board li.unclaimed { padding: .42rem; }
+  .survey-board .survey-answer { font-size: clamp(.78rem, 2.65vw, 1.12rem); }
+  .survey-rank { font-size: clamp(2.2rem, 7.5vw, 3.8rem); }
+}
+
+@media (max-width: 580px) {
+  .survey-question-option { grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: auto; min-height: 4rem; text-align: start; }
+  .survey-question-option-text { justify-self: start; text-wrap: pretty; }
+  .survey-ballot-choices { gap: .6rem; }
+  .survey-board li::before { border-image-width: 7px; border-image-outset: 2px; }
+}
