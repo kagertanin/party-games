@@ -1,14 +1,16 @@
 import "./demo.css";
-import { SurveyGame } from "./survey";
+import { MAX_ROUNDS, SurveyGame } from "./survey";
 import { demoGuesses, questions } from "./questions";
+import { renderTurnSpiral } from "./turn-spiral";
 
 const TURN_MS = 30_000;
 const VOTE_ONLY_MS = 10_000;
-const colors = ["#baf68f", "#ffd084", "#d4b9ff"];
 const escape = (text: string) =>
   text.replace(/[&<>"']/g, (char) => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
   })[char]!);
+const clockText = (milliseconds: number) =>
+  `00:${String(Math.ceil(milliseconds / 1000)).padStart(2, "0")}`;
 
 export function mountSurveyDemo(app: HTMLElement) {
   let game: SurveyGame | null = null;
@@ -23,28 +25,71 @@ export function mountSurveyDemo(app: HTMLElement) {
 
   const timeLeft = () => Math.max(0, deadline - performance.now());
 
-  function scoreboard(match: SurveyGame) {
-    return `<div class="survey-scores" aria-label="Общий счёт">
-      ${match.teams.map((team, index) => `
-        <div class="survey-score ${match.phase === "turn" && index === match.activeTeam ? "active" : ""}" style="--team:${colors[index]}">
-          <span class="survey-team-name"><i></i>${team.name}</span>
-          <strong>${team.score}</strong>
-        </div>`).join("")}
+  function teamSidebar(match: SurveyGame) {
+    const hasTurn = match.phase === "turn";
+    const playing = hasTurn && deadline !== 0;
+    const activeTeam = hasTurn ? match.activeTeam : -1;
+    const ownTeam = !playing && match.lastAnswer ? match.lastAnswer.team : match.activeTeam;
+    const own = match.teams[ownTeam];
+    const teamOrder = match.teams.map((_, turn) => match.teamForTurn(turn));
+    const playedTurns = match.turnIndex + Number(!hasTurn);
+    const totalTurns = match.teams.length * MAX_ROUNDS;
+    const progressLabel = hasTurn
+      ? `Круг ${Math.floor(match.turnIndex / match.teams.length) + 1} из ${MAX_ROUNDS}. ${playing ? "Отвечают" : "Следом"} — ${match.teams[activeTeam].name}.`
+      : "Вопрос завершён.";
+
+    return `<aside class="survey-sidebar" aria-label="Команды">
+      <section class="survey-team-card survey-team-${ownTeam}${ownTeam === activeTeam ? " is-current" : ""}" aria-label="Моя команда">
+        <div class="survey-team-head">
+          <div><span class="survey-team-label">Моя команда</span><h2>${escape(own.name)}</h2>
+            ${ownTeam === activeTeam && playing ? '<small class="survey-responding">Отвечают</small>' : ""}</div>
+          <strong class="survey-score-value" aria-label="Очки команды: ${own.score}">${own.score}</strong>
+        </div>
+        <ol class="survey-roster" aria-label="Игроки команды">
+          ${own.players.map((name, index) => {
+            const member = `<span class="survey-member-avatar" aria-hidden="true">${index + 1}</span>
+              <span class="survey-member-name">${escape(name)}${player === index ? '<small class="survey-member-you"> (вы)</small>' : ""}</span>
+              ${playing && match.votes.has(index) ? '<small class="survey-member-status" aria-label="Голос отдан">✓</small>' : ""}`;
+            return playing
+              ? `<li><button class="survey-member" data-player="${index}" aria-pressed="${player === index}">${member}</button></li>`
+              : `<li><div class="survey-member${player === index ? " is-selected" : ""}">${member}</div></li>`;
+          }).join("")}
+        </ol>
+      </section>
+      <div class="survey-rivals" aria-label="Соперники">
+        ${match.teams.map((team, index) => index === ownTeam ? "" : `
+          <div class="survey-rival survey-team-${index}${index === activeTeam ? " is-current" : ""}">
+            <span class="survey-team-name"><i class="survey-team-dot" aria-hidden="true"></i>
+              <span>${escape(team.name)}${index === activeTeam ? '<small class="survey-responding">Следом</small>' : ""}</span>
+            </span>
+            <strong aria-label="Очки команды: ${team.score}">${team.score}</strong>
+          </div>`).join("")}
+      </div>
+      <div class="survey-turn-progress" role="img" aria-label="${progressLabel} Сыграно ${playedTurns} из ${totalTurns} возможных ходов.">
+        ${renderTurnSpiral(teamOrder, MAX_ROUNDS, playedTurns, hasTurn)}
+      </div>
+    </aside>`;
+  }
+
+  function questionProgress(match: SurveyGame) {
+    return `<div class="survey-question-progress" role="img" aria-label="Вопрос ${match.questionIndex + 1} из ${questions.length}">
+      ${questions.map((_, index) => `<span class="survey-question-node${index < match.questionIndex ? " is-past" : index === match.questionIndex ? " is-current" : ""}" aria-hidden="true"></span>`).join("")}
     </div>`;
   }
 
   function board(match: SurveyGame) {
     const revealed = match.phase === "reveal";
     return `<section class="survey-board" aria-label="Табло ответов">
-      <div class="survey-board-heading"><h2>Табло</h2><span>Угадано ${match.opened.size} из 6</span></div>
       <ol>${match.question.answers.map((answer, index) => {
         const team = match.opened.get(index);
         const opened = team !== undefined;
-        return `<li class="${opened ? "found" : revealed ? "unclaimed" : "hidden-answer"}" ${opened ? `style="--team:${colors[team]}"` : ""}>
-          <span class="survey-rank">${index + 1}</span>
-          <span class="survey-answer">${opened || revealed ? escape(answer.label) : '<span class="survey-mask" aria-label="Ответ скрыт"></span>'}</span>
-          <span class="survey-points">${opened || revealed ? answer.points : "—"}</span>
-        </li>`;
+        return opened || revealed
+          ? `<li class="${opened ? `found survey-team-${team}` : "unclaimed"}">
+            <span class="survey-rank">${index + 1}</span>
+            <span class="survey-answer">${escape(answer.label)}</span>
+            <span class="survey-points" aria-label="${opened ? "Очки" : "Не начислено"}: ${answer.points}">${answer.points}</span>
+          </li>`
+          : `<li class="hidden-answer" aria-label="Ответ ${index + 1} скрыт"><span class="survey-rank">${index + 1}</span></li>`;
       }).join("")}</ol>
     </section>`;
   }
@@ -75,29 +120,33 @@ export function mountSurveyDemo(app: HTMLElement) {
       const votes = Array.from(match.votes.values()).filter((id) => id === proposal.id).length;
       const marked = selected === proposal.id;
       return `<button class="survey-proposal" data-vote="${proposal.id}" aria-pressed="${marked}">
-        <span>${escape(proposal.text)}${marked ? "<small>Твой голос</small>" : ""}</span>
+        <span class="survey-choice-mark" aria-hidden="true">${marked ? "✓" : ""}</span>
+        <span>${escape(proposal.text)}</span>
         <span class="survey-votes" aria-label="Голосов: ${votes}">${votes}</span>
       </button>`;
     }).join("");
 
-    return `<section class="survey-panel" style="--team:${colors[match.activeTeam]}" aria-label="Ход команды">
-      <div class="survey-panel-head">
-        <div><span>${deadline ? "Сейчас отвечает" : "Следующая команда"}</span><h2>${team.name}</h2></div>
-        <div class="survey-clock" id="survey-clock" aria-label="Секунды до конца хода">${deadline ? Math.ceil(timeLeft() / 1000) : 30}<small>сек.</small></div>
+    const remaining = deadline ? timeLeft() : TURN_MS;
+    return `<section class="survey-panel survey-team-${match.activeTeam}" aria-label="Ход команды">
+      <div class="survey-workhead">
+        <div class="survey-work-heading">
+          <h2>${deadline ? votingOnly ? "Время голосовать" : "Предложите ответ" : "Следующий ход"}</h2>
+          ${deadline && votingOnly ? '<p class="survey-phase">Приём вариантов завершён.</p>' : ""}
+        </div>
+        <div class="survey-timer">
+          <span class="survey-timer-label">${deadline ? "Ваш ход" : escape(team.name)}</span>
+          <time class="survey-clock" id="survey-clock" datetime="PT${Math.ceil(remaining / 1000)}S">${clockText(remaining)}</time>
+          <progress class="survey-clock-track" max="${TURN_MS}" value="${remaining}" aria-label="Время хода"></progress>
+        </div>
       </div>
       ${deadline ? `
-        <p class="survey-phase" id="survey-phase">${votingOnly ? "Последние секунды · только голосование" : "Предложения и голосование"}</p>
-        <div class="survey-personas" aria-label="Участники команды">
-          ${team.players.map((name, index) => `<button data-player="${index}" aria-pressed="${player === index}" title="${match.votes.has(index) ? "Голос отдан" : "Можно проголосовать"}">${escape(name)}${match.votes.has(index) ? " ✓" : ""}</button>`).join("")}
-        </div>
-        <div class="survey-step"><span>1</span><h3>Предложи ответ</h3></div>
-        ${votingOnly ? `<p class="survey-muted">Приём вариантов завершён.</p>` : hasProposed ? `<p class="survey-muted">Твой вариант в списке. Теперь проголосуй.</p>` : `
+        ${votingOnly ? "" : hasProposed ? `<p class="survey-muted">Твой вариант в списке. Теперь проголосуй.</p>` : `
           <form class="survey-form" id="survey-propose">
-            <input name="answer" aria-label="Твой вариант ответа" placeholder="Введи свой вариант" value="${escape(draft)}" maxlength="80" required autocomplete="off" aria-describedby="survey-error">
-            <button class="survey-button secondary-action" type="submit">Предложить</button>
+            <input name="answer" aria-label="Твой вариант ответа" placeholder="Ваш вариант" value="${escape(draft)}" maxlength="80" required autocomplete="off" aria-describedby="survey-error">
+            <button class="survey-button primary-action" type="submit">Предложить</button>
           </form>`}
         <p id="survey-error" class="survey-error" role="status">${escape(proposalError)}</p>
-        <div class="survey-step"><span>2</span><h3>Выбери ответ команды</h3><small>Голосов: ${match.votes.size}/${team.players.length}</small></div>
+        <div class="survey-step"><h3>Выберите ответ команды</h3><small>Голосов: ${match.votes.size}/${team.players.length}</small></div>
         <div class="survey-proposals">${cardList || '<p class="survey-muted">Здесь появятся варианты вашей команды.</p>'}</div>
         <div class="survey-turn-actions">
           <button class="survey-button secondary-action" data-survey="suggest" ${votingOnly ? "disabled" : ""}>Примеры от команды</button>
@@ -140,7 +189,7 @@ export function mountSurveyDemo(app: HTMLElement) {
       <p class="survey-kicker">Три вопроса сыграны</p>
       <h1>${winners.length > 1 ? "Ничья" : `Победили <em>${winners[0].name.toLowerCase()}</em>`}</h1>
       ${winners.length > 1 ? `<p>${winners.map((team) => team.name).join(" · ")} набрали по ${winners[0].score} очков.</p>` : ""}
-      <ol>${standings.map((team) => `<li style="--team:${colors[match.teams.indexOf(team)]}"><span><i></i>${team.name}</span><strong>${team.score}</strong></li>`).join("")}</ol>
+      <ol>${standings.map((team) => `<li class="survey-team-${match.teams.indexOf(team)}"><span><i></i>${team.name}</span><strong>${team.score}</strong></li>`).join("")}</ol>
       <button class="survey-button primary-action" data-survey="reset">Сыграть ещё</button>
     </main>`;
   }
@@ -148,15 +197,18 @@ export function mountSurveyDemo(app: HTMLElement) {
   function render() {
     app.classList.add("survey-app");
     app.innerHTML = `
-      <header class="survey-header"><a href="./" class="survey-brand">party<span>games</span></a><span>Угадай ответ</span><a href="./">Все игры</a></header>
+      <header class="survey-header"><a href="./" class="survey-brand">Party Games</a><span>Угадай ответ</span><a href="./">Все игры</a></header>
       ${!game ? setup() : game.phase === "results" ? results(game) : `
         <main class="survey-wrap survey-match">
-          ${scoreboard(game)}
-          <div class="survey-question">
-            <div class="survey-meta"><span>Вопрос ${game.questionIndex + 1} из ${questions.length}</span><span>Круг ${Math.floor(game.turnIndex / 3) + 1} из 3</span></div>
-            <h1>${escape(game.question.prompt)}</h1>
+          ${teamSidebar(game)}
+          <div class="survey-main">
+            <div class="survey-question">
+              ${questionProgress(game)}
+              <h1>${escape(game.question.prompt)}</h1>
+            </div>
+            ${board(game)}
+            ${turnPanel(game)}
           </div>
-          <div class="survey-columns">${board(game)}${turnPanel(game)}</div>
         </main>`}
       <footer class="survey-footer"><span>Демо на одном экране</span><span>Данные: <a href="https://github.com/iesl/protoqa-data" target="_blank" rel="noopener noreferrer">ProtoQA (Boratko и др., 2020)</a> · <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener noreferrer">CC BY 4.0</a> · перевод и варианты ввода адаптированы</span></footer>`;
   }
@@ -181,7 +233,7 @@ export function mountSurveyDemo(app: HTMLElement) {
   }
 
   function focusNext() {
-    document.querySelector<HTMLButtonElement>(".survey-panel .primary-action")?.focus({preventScroll: true});
+    app.querySelector<HTMLButtonElement>(".survey-panel [data-survey]")?.focus({preventScroll: true});
   }
 
   function refreshTimer() {
@@ -192,13 +244,29 @@ export function mountSurveyDemo(app: HTMLElement) {
       return;
     }
     if (!votingOnly && remaining <= VOTE_ONLY_MS) {
-      const hadInputFocus = document.activeElement?.closest("#survey-propose");
+      const focused = document.activeElement;
+      const previousPlayer = focused instanceof HTMLButtonElement ? focused.dataset.player : undefined;
+      const previousVote = focused instanceof HTMLButtonElement ? focused.dataset.vote : undefined;
+      const finishFocused = focused?.matches("[data-survey='submit']");
       votingOnly = true;
       render();
-      if (hadInputFocus) document.querySelector<HTMLButtonElement>(".survey-proposal, [data-survey='submit']")?.focus({preventScroll: true});
+      let replacement = "";
+      if (previousPlayer !== undefined) replacement = `[data-player="${previousPlayer}"]`;
+      else if (previousVote !== undefined) replacement = `[data-vote="${previousVote}"]`;
+      else if (finishFocused) replacement = "[data-survey='submit']";
+      else if (focused?.closest("#survey-propose, [data-survey='suggest']")) {
+        replacement = ".survey-proposal, [data-survey='submit']";
+      }
+      if (replacement) app.querySelector<HTMLButtonElement>(replacement)?.focus({preventScroll: true});
     } else {
-      const clock = document.querySelector("#survey-clock");
-      if (clock?.firstChild) clock.firstChild.textContent = String(Math.ceil(remaining / 1000));
+      const clock = app.querySelector<HTMLTimeElement>("#survey-clock");
+      const time = clockText(remaining);
+      if (clock && clock.textContent !== time) {
+        clock.textContent = time;
+        clock.dateTime = `PT${Math.ceil(remaining / 1000)}S`;
+      }
+      const track = app.querySelector<HTMLProgressElement>(".survey-clock-track");
+      if (track) track.value = remaining;
     }
   }
 
@@ -245,6 +313,7 @@ export function mountSurveyDemo(app: HTMLElement) {
     const action = button.dataset.survey;
     if (action === "start") {
       game = new SurveyGame(questions, playerCount);
+      player = 0;
       previousResult = false;
       render();
       focusNext();
@@ -257,6 +326,7 @@ export function mountSurveyDemo(app: HTMLElement) {
     if (action === "suggest" && timeLeft() > VOTE_ONLY_MS) addExamples(game);
     if (action === "next-question") {
       game.nextQuestion();
+      player = 0;
       previousResult = false;
       render();
       focusNext();

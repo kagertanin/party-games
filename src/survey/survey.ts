@@ -17,7 +17,7 @@ type TurnResult = {
 };
 
 const TEAMS = ["Зелёные", "Апельсины", "Сиреневые"];
-const MAX_ROUNDS = 3;
+export const MAX_ROUNDS = 3;
 const MAX_ANSWER_LENGTH = 80;
 
 function normalizeAnswer(text: string): string {
@@ -65,7 +65,11 @@ export class SurveyGame {
   }
 
   get activeTeam(): number {
-    return (this.questionIndex + this.turnIndex) % this.teams.length;
+    return this.teamForTurn(this.turnIndex);
+  }
+
+  teamForTurn(turnIndex: number): number {
+    return (this.questionIndex + turnIndex) % this.teams.length;
   }
 
   get proposals(): readonly Proposal[] {

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { SurveyGame, type Question } from "../src/survey/survey";
+import { renderTurnSpiral } from "../src/survey/turn-spiral";
 
 const question: Question = {
   prompt: "Что берут с собой на пикник?",
@@ -59,6 +60,9 @@ test("each team starts one question; final reveal is followed by results", () =>
   const game = new SurveyGame([question, question, question], 12);
   for (let questionIndex = 0; questionIndex < 3; questionIndex++) {
     assert.equal(game.activeTeam, questionIndex);
+    assert.deepEqual([0, 1, 2].map((turn) => game.teamForTurn(turn)), [
+      questionIndex, (questionIndex + 1) % 3, (questionIndex + 2) % 3,
+    ]);
     assert.equal(game.turnIndex, 0);
     assert.equal(game.opened.size, 0);
     playAnswer(game, "Еда");
@@ -68,6 +72,22 @@ test("each team starts one question; final reveal is followed by results", () =>
   }
   assert.equal(game.phase, "results");
   assert.deepEqual(game.teams.map((t) => t.score), [25, 25, 25]);
+});
+
+test("the spiral follows turn order and ends at its last checkpoint", () => {
+  const spiral = renderTurnSpiral([1, 2, 0], 3, 4, true);
+  const nodes = Array.from(spiral.matchAll(/survey-spiral-node survey-team-(\d)([^"]*)/g));
+  assert.deepEqual(nodes.map(([, team]) => Number(team)), [1, 2, 0, 1, 2, 0, 1, 2, 0]);
+  assert.deepEqual(nodes.map(([, , state]) => state.trim()), [
+    "is-played", "is-played", "is-played", "is-played", "is-current", "", "", "", "",
+  ]);
+  const path = spiral.match(/class="survey-spiral-track" d="([^"]+)"/)![1];
+  const lastDot = Array.from(spiral.matchAll(/class="survey-spiral-dot" cx="([^"]+)" cy="([^"]+)"/g)).at(-1)!;
+  assert.equal(path.split(" L").at(-1), `${lastDot[1]} ${lastDot[2]}`);
+
+  const revealed = renderTurnSpiral([1, 2, 0], 3, 6, false);
+  assert.equal(Array.from(revealed.matchAll(/is-played/g)).length, 6);
+  assert.doesNotMatch(revealed, /is-current/);
 });
 
 test("proposals and votes are separate; members can switch their single vote", () => {
