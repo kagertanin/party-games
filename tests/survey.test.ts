@@ -78,6 +78,27 @@ test("each team starts one question; final reveal is followed by results", () =>
   assert.deepEqual(game.teams.map((t) => t.score), [25, 25, 25]);
 });
 
+test("voted question IDs select their own answers without changing round order or match length", () => {
+  const pool = Array.from({length: 5}, (_, id) => ({
+    ...question, prompt: `Вопрос ${id}`,
+    answers: question.answers.map((answer) => ({...answer, points: answer.points + id})),
+  }));
+  const game = new SurveyGame(pool, 12, () => 0, 3);
+  for (const [index, id] of [2, 4, 3].entries()) {
+    game.selectQuestion(id);
+    assert.equal(game.question.prompt, pool[id].prompt);
+    assert.equal(game.questionId, id);
+    assert.equal(game.activeTeam, index);
+    assert.throws(() => game.selectQuestion(0));
+    playAnswer(game, "Еда");
+    assert.equal(game.lastAnswer?.points, 25 + id);
+    for (let turn = 1; turn < 6; turn++) game.finishTurn();
+    game.nextQuestion();
+  }
+  assert.equal(game.phase, "results");
+  assert.deepEqual(game.teams.map(({score}) => score), [27, 29, 28]);
+});
+
 test("only the first circuit of the game has three minutes and a delayed countdown", () => {
   const openingTiming = { durationMs: 180_000, showClockAtMs: 150_000, voteOnlyMs: 10_000 };
   const standardTiming = { durationMs: 60_000, showClockAtMs: 0, voteOnlyMs: 10_000 };

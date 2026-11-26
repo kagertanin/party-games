@@ -86,17 +86,22 @@ export class SurveyGame {
   private readonly currentProposals: Proposal[] = [];
   private readonly submitted = new Set<number>();
   private manualCandidate: { key: string; proposal: Proposal | undefined } | undefined;
+  private chosenQuestionId: number | undefined;
 
   constructor(
     private readonly questions: readonly Question[],
     playerCount: number,
     private readonly random: () => number = Math.random,
+    readonly questionLimit = questions.length,
   ) {
     if (!Number.isInteger(playerCount) || playerCount < 10 || playerCount > 12) {
       throw new Error("Для игры нужно от 10 до 12 участников.");
     }
     if (!questions.length || questions.some(({ answers }) => answers.length !== 6)) {
       throw new Error("У каждого вопроса должно быть шесть ответов.");
+    }
+    if (!Number.isInteger(questionLimit) || questionLimit < 1 || questionLimit > questions.length) {
+      throw new Error("Неверное число вопросов в партии.");
     }
 
     let nextPlayer = 1;
@@ -108,7 +113,20 @@ export class SurveyGame {
   }
 
   get question(): Question {
-    return this.questions[this.questionIndex];
+    return this.questions[this.questionId];
+  }
+
+  get questionId(): number {
+    return this.chosenQuestionId ?? this.questionIndex;
+  }
+
+  selectQuestion(id: number): void {
+    if (this.phase !== "turn" || this.turnIndex !== 0 || this.chosenQuestionId !== undefined ||
+        this.submitted.size || this.completedTurns.length ||
+        !Number.isInteger(id) || id < 0 || id >= this.questions.length) {
+      throw new Error("Этот вопрос сейчас нельзя выбрать.");
+    }
+    this.chosenQuestionId = id;
   }
 
   get activeTeam(): number {
@@ -185,11 +203,12 @@ export class SurveyGame {
 
   nextQuestion(): void {
     if (this.phase !== "reveal") return;
-    if (this.questionIndex + 1 === this.questions.length) {
+    if (this.questionIndex + 1 === this.questionLimit) {
       this.phase = "results";
       return;
     }
     this.questionIndex++;
+    this.chosenQuestionId = undefined;
     this.turnIndex = 0;
     this.completedTurns.length = 0;
     this.opened.clear();
