@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { SurveyGame, type Question } from "../src/survey/survey";
+import { SurveyGame, TurnReadiness, type Question } from "../src/survey/survey";
 import { renderTurnSpiral } from "../src/survey/turn-spiral";
 
 const question: Question = {
@@ -22,6 +22,7 @@ function playAnswer(game: SurveyGame, answer: string): void {
 }
 
 test("10–12 players are evenly assigned to three teams", () => {
+  assert.deepEqual(new SurveyGame([question], 10).teams.map((t) => t.name), ["Яблоки", "Апельсины", "Сливы"]);
   assert.deepEqual(new SurveyGame([question], 10).teams.map((t) => t.players.length), [4, 3, 3]);
   assert.deepEqual(new SurveyGame([question], 11).teams.map((t) => t.players.length), [4, 4, 3]);
   assert.deepEqual(new SurveyGame([question], 12).teams.map((t) => t.players.length), [4, 4, 4]);
@@ -74,16 +75,82 @@ test("each team starts one question; final reveal is followed by results", () =>
   assert.deepEqual(game.teams.map((t) => t.score), [25, 25, 25]);
 });
 
-test("the spiral follows turn order and ends at its last checkpoint", () => {
-  const spiral = renderTurnSpiral([1, 2, 0], 3, 4, true);
-  const nodes = Array.from(spiral.matchAll(/survey-spiral-node survey-team-(\d)([^"]*)/g));
+test("readiness starts the turn as soon as all teammates confirm", () => {
+  const readiness = new TurnReadiness(3, 1_000);
+  assert.equal(readiness.remaining(1_000), 10_000);
+  assert.equal(readiness.confirm(0, 1_100), false);
+  assert.equal(readiness.confirm(0, 1_200), false);
+  assert.equal(readiness.count, 1);
+  assert.equal(readiness.isReady(0), true);
+  assert.equal(readiness.isReady(1), false);
+  assert.equal(readiness.confirm(1, 1_300), false);
+  assert.equal(readiness.confirm(2, 1_400), true);
+  assert.equal(readiness.confirm(2, 1_500), true);
+  assert.equal(readiness.shouldStart(1_500), true);
+  assert.equal(readiness.count, 3);
+  assert.throws(() => readiness.confirm(3, 1_500), RangeError);
+});
+
+test("readiness expires ten seconds after it starts even when teammates wait", () => {
+  const readiness = new TurnReadiness(3, 50_000);
+  readiness.confirm(0, 51_000);
+  assert.equal(readiness.remaining(59_999), 1);
+  assert.equal(readiness.shouldStart(59_999), false);
+  assert.equal(readiness.shouldStart(60_000), true);
+  assert.equal(readiness.remaining(80_000), 0);
+  assert.equal(readiness.confirm(1, 60_001), true);
+  assert.equal(readiness.isReady(1), false);
+  assert.equal(readiness.count, 1);
+  assert.throws(() => new TurnReadiness(0, 50_000), RangeError);
+  assert.throws(() => new TurnReadiness(3, Number.NaN), RangeError);
+});
+
+test("turn history stores the outcome and opened row, then resets on the next question", () => {
+  const game = new SurveyGame([question, question], 12);
+  playAnswer(game, "одеяло");
+  playAnswer(game, "Пылесос");
+  playAnswer(game, "Плед");
+  game.finishTurn();
+  assert.deepEqual(game.turnHistory, [
+    { team: 0, text: "одеяло", points: 20, kind: "hit", answerIndex: 1 },
+    { team: 1, text: "Пылесос", points: 0, kind: "miss" },
+    { team: 2, text: "Плед", points: 0, kind: "repeat" },
+    { team: 0, text: "", points: 0, kind: "pass" },
+  ]);
+  assert.equal(game.lastAnswer, game.turnHistory[3]);
+  while (game.phase === "turn") game.finishTurn();
+  assert.equal(game.turnHistory.length, 9);
+  game.nextQuestion();
+  assert.deepEqual(game.turnHistory, []);
+  assert.equal(game.lastAnswer, null);
+  assert.equal(game.teams[0].score, 20);
+});
+
+test("the spiral follows team order and ends at its last fruit checkpoint", () => {
+  const history = [
+    { text: "Еда", kind: "hit" },
+    { text: 'Вариант <с кавычками> "&"', kind: "miss" },
+    { text: "Плед", kind: "repeat" },
+    { text: "", kind: "pass" },
+  ] as const;
+  const spiral = renderTurnSpiral([1, 2, 0], 3, history.length, true, history);
+  const nodes = Array.from(spiral.matchAll(
+    /survey-spiral-node survey-team-(\d)([^"]*)" transform="translate\(([^)]+)\)"/g,
+  ));
   assert.deepEqual(nodes.map(([, team]) => Number(team)), [1, 2, 0, 1, 2, 0, 1, 2, 0]);
   assert.deepEqual(nodes.map(([, , state]) => state.trim()), [
     "is-played", "is-played", "is-played", "is-played", "is-current", "", "", "", "",
   ]);
+  assert.equal(Array.from(spiral.matchAll(/class="survey-fruit survey-spiral-fruit"/g)).length, 9);
   const path = spiral.match(/class="survey-spiral-track" d="([^"]+)"/)![1];
-  const lastDot = Array.from(spiral.matchAll(/class="survey-spiral-dot" cx="([^"]+)" cy="([^"]+)"/g)).at(-1)!;
-  assert.equal(path.split(" L").at(-1), `${lastDot[1]} ${lastDot[2]}`);
+  assert.equal(path.split(" L").at(-1), nodes.at(-1)![3]);
+  const connectors = Array.from(spiral.matchAll(/survey-spiral-connector" d="M([^L]+) L/g));
+  assert.deepEqual(connectors.map(([, from]) => from), nodes.slice(0, 4).map((node) => node[3]));
+  assert.deepEqual(Array.from(spiral.matchAll(/survey-spiral-label is-(\w+)/g), ([, kind]) => kind), [
+    "hit", "miss", "repeat", "pass",
+  ]);
+  assert.match(spiral, /title="Вариант &lt;с кавычками&gt; &quot;&amp;&quot;\. Ответа нет на табло"/);
+  assert.match(spiral, /class="survey-spiral-answer" aria-hidden="true">Пропуск</);
 
   const revealed = renderTurnSpiral([1, 2, 0], 3, 6, false);
   assert.equal(Array.from(revealed.matchAll(/is-played/g)).length, 6);
@@ -105,7 +172,7 @@ test("proposals and votes are separate; members can switch their single vote", (
   game.vote(0, game.proposals[1].id);
   assert.equal(game.votes.size, 3);
   game.finishTurn();
-  assert.deepEqual(game.lastAnswer, { team: 0, text: "Мяч", points: 8, kind: "hit" });
+  assert.deepEqual(game.lastAnswer, { team: 0, text: "Мяч", points: 8, kind: "hit", answerIndex: 4 });
   assert.equal(game.proposals.length, 0);
   assert.equal(game.votes.size, 0);
   assert.equal(game.hasProposed(0), false);

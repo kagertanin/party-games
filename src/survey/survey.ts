@@ -9,16 +9,60 @@ export type Question = {
 
 type Team = { name: string; players: readonly string[]; score: number };
 type Proposal = { id: number; text: string };
-type TurnResult = {
+export type TurnResult = Readonly<{
   team: number;
   text: string;
   points: number;
   kind: "hit" | "miss" | "repeat" | "pass";
-};
+  answerIndex?: number;
+}>;
 
-const TEAMS = ["Зелёные", "Апельсины", "Сиреневые"];
+const TEAMS = ["Яблоки", "Апельсины", "Сливы"];
 export const MAX_ROUNDS = 3;
 const MAX_ANSWER_LENGTH = 80;
+
+export class TurnReadiness {
+  private readonly readyPlayers = new Set<number>();
+
+  constructor(
+    private readonly teamSize: number,
+    private readonly startedAt: number,
+    private readonly durationMs = 10_000,
+  ) {
+    if (!Number.isInteger(teamSize) || teamSize < 1) {
+      throw new RangeError("В команде должен быть хотя бы один игрок.");
+    }
+    if (!Number.isFinite(startedAt) || !Number.isFinite(durationMs) || durationMs <= 0) {
+      throw new RangeError("Неверное время ожидания команды.");
+    }
+  }
+
+  get count(): number {
+    return this.readyPlayers.size;
+  }
+
+  isReady(player: number): boolean {
+    return this.readyPlayers.has(player);
+  }
+
+  remaining(now: number): number {
+    if (!Number.isFinite(now)) throw new RangeError("Неверное время.");
+    return Math.max(0, this.durationMs - Math.max(0, now - this.startedAt));
+  }
+
+  shouldStart(now: number): boolean {
+    return this.remaining(now) === 0 || this.count === this.teamSize;
+  }
+
+  confirm(player: number, now: number): boolean {
+    if (!Number.isInteger(player) || player < 0 || player >= this.teamSize) {
+      throw new RangeError("Игрок не входит в команду.");
+    }
+    if (this.shouldStart(now)) return true;
+    this.readyPlayers.add(player);
+    return this.count === this.teamSize;
+  }
+}
 
 function normalizeAnswer(text: string): string {
   return text
@@ -36,7 +80,7 @@ export class SurveyGame {
   questionIndex = 0;
   turnIndex = 0;
   phase: "turn" | "reveal" | "results" = "turn";
-  lastAnswer: TurnResult | null = null;
+  private readonly completedTurns: TurnResult[] = [];
   private readonly currentProposals: Proposal[] = [];
   private readonly submitted = new Set<number>();
 
@@ -76,6 +120,14 @@ export class SurveyGame {
     return this.currentProposals;
   }
 
+  get turnHistory(): readonly TurnResult[] {
+    return this.completedTurns;
+  }
+
+  get lastAnswer(): TurnResult | null {
+    return this.completedTurns.at(-1) ?? null;
+  }
+
   hasProposed(player: number): boolean {
     return this.submitted.has(player);
   }
@@ -104,27 +156,7 @@ export class SurveyGame {
 
   finishTurn(): void {
     if (this.phase !== "turn") return;
-    const team = this.activeTeam;
-    const proposal = this.pickProposal();
-    if (!proposal) {
-      this.lastAnswer = { team, text: "", points: 0, kind: "pass" };
-    } else {
-      const key = normalizeAnswer(proposal.text);
-      const index = this.question.answers.findIndex(({ label, aliases }) =>
-        [label, ...aliases].some((answer) => normalizeAnswer(answer) === key),
-      );
-      if (index === -1) {
-        this.lastAnswer = { team, text: proposal.text, points: 0, kind: "miss" };
-      } else if (this.opened.has(index)) {
-        this.lastAnswer = { team, text: proposal.text, points: 0, kind: "repeat" };
-      } else {
-        const { points } = this.question.answers[index];
-        this.opened.set(index, team);
-        this.teams[team].score += points;
-        this.lastAnswer = { team, text: proposal.text, points, kind: "hit" };
-      }
-    }
-
+    this.completedTurns.push(this.scoreTurn());
     this.resetBallot();
     if (this.opened.size === this.question.answers.length ||
         this.turnIndex + 1 === this.teams.length * MAX_ROUNDS) {
@@ -142,7 +174,7 @@ export class SurveyGame {
     }
     this.questionIndex++;
     this.turnIndex = 0;
-    this.lastAnswer = null;
+    this.completedTurns.length = 0;
     this.opened.clear();
     this.phase = "turn";
   }
@@ -152,6 +184,25 @@ export class SurveyGame {
         player < 0 || player >= this.teams[this.activeTeam].players.length) {
       throw new Error("Игрок не может отвечать в этом ходе.");
     }
+  }
+
+  private scoreTurn(): TurnResult {
+    const team = this.activeTeam;
+    const proposal = this.pickProposal();
+    if (!proposal) return { team, text: "", points: 0, kind: "pass" };
+
+    const text = proposal.text;
+    const key = normalizeAnswer(text);
+    const answerIndex = this.question.answers.findIndex(({ label, aliases }) =>
+      [label, ...aliases].some((answer) => normalizeAnswer(answer) === key),
+    );
+    if (answerIndex === -1) return { team, text, points: 0, kind: "miss" };
+    if (this.opened.has(answerIndex)) return { team, text, points: 0, kind: "repeat" };
+
+    const { points } = this.question.answers[answerIndex];
+    this.opened.set(answerIndex, team);
+    this.teams[team].score += points;
+    return { team, text, points, kind: "hit", answerIndex };
   }
 
   private pickProposal(): Proposal | undefined {
