@@ -1,5 +1,5 @@
+import "./base.css";
 import "./style.css";
-import "@fontsource-variable/rubik";
 import { Client, type Room } from "colyseus.js";
 import {
   act,
@@ -611,9 +611,5 @@ setInterval(() => {
   }
 }, 200);
 const params = new URLSearchParams(location.search);
-if (params.get("game") === "survey") {
-  void import("./survey/demo").then(({ mountSurveyDemo }) => mountSurveyDemo(app));
-} else {
-  if (endpoint && params.has("room")) modal = "connect";
-  render();
-}
+if (endpoint && params.has("room")) modal = "connect";
+render();

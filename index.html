@@ -9,9 +9,20 @@
       content="Шляпа — два круга объяснений и одна компания. Попробуйте полную демопартию в Party Games."
     />
     <title>Шляпа · Party Games</title>
+    <style>
+      .game-loading { margin: 0; padding: 20vh 1rem 1rem; text-align: center; font: 16px/1.4 Arial, sans-serif; color: #30130e; }
+      .game-loading a { display: inline-block; margin-top: .75rem; color: inherit; visibility: hidden; animation: show-retry 8s step-end forwards; }
+      .game-loading.is-error a { visibility: visible; animation: none; }
+      @keyframes show-retry { to { visibility: visible; } }
+    </style>
   </head>
   <body>
-    <div id="app"></div>
-    <script type="module" src="/src/main.ts"></script>
+    <div id="app">
+      <div class="game-loading">
+        <span role="status">Загружаем игру…</span><br />
+        <a href="">Попробовать ещё раз</a>
+      </div>
+    </div>
+    <script type="module" src="/src/entry.ts"></script>
   </body>
 </html>

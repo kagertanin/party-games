@@ -1,0 +1,57 @@
+@import "@fontsource-variable/rubik";
+
+:root {
+  font-family: "Rubik Variable", "Rubik", Arial, sans-serif;
+  color: #203e37;
+  background: #f7f6ef;
+  font-synthesis: none;
+  --green: #174f46;
+  --ink: #203e37;
+  --muted: #7d8278;
+  --border: #dddfd4;
+  --cream: #f7f6ef;
+  --yellow: #f6d961;
+}
+
+* { box-sizing: border-box; }
+
+body, h1, h2, h3, p { margin: 0; }
+
+h1 {
+  font-weight: 550;
+  letter-spacing: -3px;
+  line-height: 1.04;
+}
+
+h2 {
+  font-weight: 500;
+  letter-spacing: -1px;
+}
+
+h3 { font-weight: 500; }
+
+button, input, select { font: inherit; }
+
+button {
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  transition: background 0.18s, transform 0.18s;
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+button:not(:disabled):active { transform: translateY(1px); }
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible {
+  outline: 3px solid #d39b27;
+  outline-offset: 4px;
+}
+
+input, select { color: var(--ink); }

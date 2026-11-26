@@ -1,8 +1,10 @@
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { resolve, extname } from "node:path";
 import { pathToFileURL } from "node:url";
+import { promisify } from "node:util";
+import { gzip } from "node:zlib";
 import { Room, Server, type Client } from "@colyseus/core";
 import { WebSocketTransport } from "@colyseus/ws-transport";
 import {
@@ -14,6 +16,27 @@ import {
   view,
   type Action,
 } from "../shared/game.js";
+
+const gzipAsync = promisify(gzip);
+const staticMime: Record<string, string> = {
+  ".html": "text/html; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".txt": "text/plain; charset=utf-8",
+  ".webp": "image/webp",
+  ".woff": "font/woff",
+  ".woff2": "font/woff2",
+};
+
+function acceptsGzip(header: string | undefined): boolean {
+  const qualities = new Map<string, number>();
+  for (const entry of header?.toLowerCase().split(",") ?? []) {
+    const [encoding, ...params] = entry.split(";").map((part) => part.trim());
+    const quality = params.find((param) => param.startsWith("q="));
+    qualities.set(encoding, quality === undefined ? 1 : Number(quality.slice(2)));
+  }
+  return (qualities.get("gzip") ?? qualities.get("*") ?? 0) > 0;
+}
 
 export class HatRoom extends Room {
   game = createGame("");
@@ -140,16 +163,32 @@ export async function startServer(port = Number(process.env.PORT || 2567)) {
         return;
       }
       const body = await readFile(file);
-      const mime: Record<string, string> = {
-        ".html": "text/html; charset=utf-8",
-        ".js": "text/javascript",
-        ".css": "text/css",
-        ".woff2": "font/woff2",
+      const contentType = staticMime[extname(file)] || "application/octet-stream";
+      const fingerprinted = /^\/assets\/[^/]+-[\w-]{8}\.[\w]+$/.test(pathname);
+      // The gzip and identity responses represent the same content.
+      const etag = `W/"${createHash("sha256").update(body).digest("base64url")}"`;
+      const compressible = contentType.startsWith("text/") && body.length >= 1024;
+      const headers: Record<string, string | number> = {
+        "Cache-Control": fingerprinted ? "public, max-age=31536000, immutable" : "no-cache",
+        ETag: etag,
       };
-      res.writeHead(200, {
-        "Content-Type": mime[extname(file)] || "application/octet-stream",
+      if (compressible) headers.Vary = "Accept-Encoding";
+      const cached = req.headers["if-none-match"]?.split(",").some((tag) => {
+        const value = tag.trim();
+        return value === "*" || value.replace(/^W\//, "") === etag.slice(2);
       });
-      res.end(body);
+      if (cached && (req.method === "GET" || req.method === "HEAD")) {
+        res.writeHead(304, headers);
+        res.end();
+        return;
+      }
+      headers["Content-Type"] = contentType;
+      const useGzip = compressible && acceptsGzip(req.headers["accept-encoding"]);
+      const responseBody = useGzip ? await gzipAsync(body) : body;
+      if (useGzip) headers["Content-Encoding"] = "gzip";
+      headers["Content-Length"] = responseBody.length;
+      res.writeHead(200, headers);
+      res.end(responseBody);
     } catch {
       res.writeHead(404);
       res.end("Not found");

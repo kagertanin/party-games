@@ -1,56 +1,3 @@
-:root {
-  font-family: "Rubik Variable", "Rubik", Arial, sans-serif;
-  color: #203e37;
-  background: #f7f6ef;
-  font-synthesis: none;
-  --green: #174f46;
-  --ink: #203e37;
-  --muted: #7d8278;
-  --border: #dddfd4;
-  --cream: #f7f6ef;
-  --yellow: #f6d961;
-}
-* {
-  box-sizing: border-box;
-}
-body {
-  margin: 0;
-}
-button,
-input,
-select {
-  font: inherit;
-}
-button {
-  cursor: pointer;
-  color: inherit;
-}
-button:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-}
-button {
-  transition:
-    background 0.18s,
-    transform 0.18s;
-}
-button:not(:disabled):active {
-  transform: translateY(1px);
-}
-button:focus-visible,
-a:focus-visible,
-input:focus-visible,
-select:focus-visible {
-  outline: 3px solid #d39b27;
-  outline-offset: 4px;
-}
-button {
-  border: 0;
-}
-input,
-select {
-  color: var(--ink);
-}
 .topbar {
   max-width: 1440px;
   margin: auto;
@@ -170,24 +117,6 @@ main.home {
 .mini-star {
   font-size: 19px;
   color: var(--green);
-}
-h1,
-h2,
-h3,
-p {
-  margin: 0;
-}
-h1 {
-  font-weight: 550;
-  letter-spacing: -3px;
-  line-height: 1.04;
-}
-h2 {
-  font-weight: 500;
-  letter-spacing: -1px;
-}
-h3 {
-  font-weight: 500;
 }
 .hero-copy h1 {
   font-size: clamp(60px, 6.5vw, 94px);
