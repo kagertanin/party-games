@@ -54,6 +54,7 @@ export function mountSurveyDemo(app: HTMLElement) {
   document.querySelector('meta[name="theme-color"]')?.setAttribute("content", "#ede7fb");
 
   const liveMatch = () => lobby.view?.match;
+  const fruitOf = (team: number) => lobby.view?.teams[team]?.fruitIndex ?? team;
   const timeLeft = () => Math.max(0, (liveMatch() ? liveDeadline : deadline) - performance.now());
   const turnTiming = (match: SurveyDisplay) =>
     getTurnTiming(match.questionIndex, match.turnIndex, match.teams.length);
@@ -93,7 +94,7 @@ export function mountSurveyDemo(app: HTMLElement) {
     const activeTeam = resolving?.team ?? (hasTurn ? match.activeTeam : -1);
     const ownTeam = viewingTeam ?? (resolving?.team ?? match.lastAnswer?.team ?? match.activeTeam);
     const perspectiveTeam = viewingTeam === null && hasTurn ? match.activeTeam : ownTeam;
-    const teamOrder = match.teams.map((_, turn) => match.teamForTurn(turn));
+    const teamOrder = match.teams.map((_, turn) => fruitOf(match.teamForTurn(turn)));
     const playedTurns = match.turnHistory.length;
     const totalTurns = match.teams.length * MAX_ROUNDS;
     const progressLabel = resolving ? "Результат хода." : hasTurn
@@ -109,10 +110,10 @@ export function mountSurveyDemo(app: HTMLElement) {
           const current = teamIndex === activeTeam;
           const interactive = !liveMatch() && own && current && (playing || waitingForTeam());
           const score = displayedScore(teamIndex);
-          return `<section class="survey-team-section survey-team-${teamIndex}${own ? " is-own" : ""}${current ? " is-current" : ""}${open ? " is-expanded" : ""}">
+          return `<section class="survey-team-section survey-team-${fruitOf(teamIndex)}${own ? " is-own" : ""}${current ? " is-current" : ""}${open ? " is-expanded" : ""}">
             <button class="survey-team-toggle" data-expand-team="${teamIndex}" aria-expanded="${open}" aria-controls="survey-roster-${teamIndex}">
               <span>${own ? '<span class="survey-team-label">Моя команда</span>' : ""}
-                <span class="survey-team-name">${renderFruit(teamIndex)}<span>${escape(team.name)}</span></span>
+                <span class="survey-team-name">${renderFruit(fruitOf(teamIndex))}<span>${escape(team.name)}</span></span>
                 ${playing && current ? '<small class="survey-responding">Отвечают</small>' : ""}
               </span>
               <strong class="survey-rival-score" data-score-team="${teamIndex}" aria-label="Очки команды: ${score}">${score}</strong>
@@ -180,7 +181,7 @@ export function mountSurveyDemo(app: HTMLElement) {
         ${remaining <= QUESTION_BALLOT_CLOCK_MS ? ballotClock(remaining) : ""}
       </div>
       <div class="survey-ballot-choices">
-        ${ballot.choices.map(({ id, prompt, votes }) => `<button class="survey-question-option" data-question-id="${id}" aria-pressed="${ballot.selected === id}" ${lobby.connected && remaining > 0 ? "" : "disabled"}>
+        ${ballot.choices.map(({ id, prompt, votes }) => `<button class="survey-question-option" data-question-id="${id}" aria-pressed="${ballot.selected === id}" ${lobby.connected && viewingTeam !== null && viewingTeam >= 0 && remaining > 0 ? "" : "disabled"}>
           <span class="survey-question-option-text">${escape(prompt)}</span>
           <span class="survey-question-votes" aria-label="Голосов: ${votes}">${votes}</span>
         </button>`).join("")}
@@ -207,7 +208,7 @@ export function mountSurveyDemo(app: HTMLElement) {
       <ol>${match.question.answers.map((_, index) => {
         const team = match.opened.get(index);
         return (team !== undefined || revealed) && resolving?.answerIndex !== index
-          ? `<li data-answer-index="${index}" class="${team === undefined ? "unclaimed" : `found survey-team-${team}`}">${revealedTile(match, index, team)}</li>`
+          ? `<li data-answer-index="${index}" class="${team === undefined ? "unclaimed" : `found survey-team-${fruitOf(team)}`}">${revealedTile(match, index, team)}</li>`
           : `<li data-answer-index="${index}" class="hidden-answer" aria-label="Ответ ${index + 1} скрыт"><span class="survey-rank">${index + 1}</span></li>`;
       }).join("")}</ol>
     </section>`;
@@ -236,7 +237,7 @@ export function mountSurveyDemo(app: HTMLElement) {
       const confirmed = readyPlayer(player);
       const remaining = readiness?.remaining(performance.now()) ?? timeLeft();
       const readyCount = liveMatch()?.ready.length ?? readiness?.count ?? 0;
-      return `<section class="survey-panel survey-team-${match.activeTeam}${ownTurn ? "" : " is-spectator"}" aria-label="Подготовка команды">
+      return `<section class="survey-panel survey-team-${fruitOf(match.activeTeam)}${ownTurn ? "" : " is-spectator"}" aria-label="Подготовка команды">
         <div class="survey-ready">
           <div class="survey-ready-copy">
             <h2 tabindex="-1">${escape(team.name)} — ваш ход!</h2>
@@ -257,7 +258,7 @@ export function mountSurveyDemo(app: HTMLElement) {
     const remaining = timeLeft();
     const visibleWindowMs = visibleTurnClockWindow(match);
     const showClock = remaining <= visibleWindowMs;
-    return `<section class="survey-panel survey-team-${match.activeTeam}${ownTurn ? "" : " is-spectator"}" aria-label="Ход команды">
+    return `<section class="survey-panel survey-team-${fruitOf(match.activeTeam)}${ownTurn ? "" : " is-spectator"}" aria-label="Ход команды">
       <div class="survey-workhead">
         <div class="survey-work-heading">
           <h2 tabindex="-1">${!ownTurn ? `Отвечают «${escape(team.name)}»` : choosingOnly ? "Время голосовать" : "Предложите ответ"}</h2>
@@ -349,7 +350,7 @@ export function mountSurveyDemo(app: HTMLElement) {
       ${winners.length > 1 ? `<p>${winners.map((team) => team.name).join(" · ")} набрали по ${winners[0].score} очков.</p>` : ""}
       <ol>${standings.map((team) => {
         const index = match.teams.indexOf(team);
-        return `<li class="survey-team-${index}"><span>${renderFruit(index)}${team.name}</span><strong>${team.score}</strong></li>`;
+        return `<li class="survey-team-${fruitOf(index)}"><span>${renderFruit(fruitOf(index))}${team.name}</span><strong>${team.score}</strong></li>`;
       }).join("")}</ol>
       ${canAdvance() ? '<button class="survey-button primary-action" data-survey="reset">Сыграть ещё</button>' : '<p class="survey-muted">Ждём ведущего.</p>'}
     </main>`;
@@ -370,6 +371,7 @@ export function mountSurveyDemo(app: HTMLElement) {
             <option value="auto" ${viewingTeam === null ? "selected" : ""}>Все по очереди</option>
           </select></label>` : ""}<a href="./">Все игры</a></header>
       ${room && match ? lobby.connectionMarkup() : ""}
+      ${room && live && viewingTeam === -1 ? '<p class="survey-online-state" role="status">Партия началась, пока вас не было. Можно смотреть и сыграть в следующей партии.</p>' : ""}
       ${!match ? room ? lobby.lobbyMarkup() : setup() : match.phase === "results" ? results(match) : `
         <main class="survey-wrap survey-match">
           ${teamSidebar(match)}

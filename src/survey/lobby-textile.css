@@ -162,7 +162,6 @@
   .survey-online-heading { gap: .95rem; }
 }
 @media (max-width: 25rem) {
-  .survey-online-settings { grid-template-columns: 1fr; }
   .survey-online-dialog .survey-online-modes { gap: .4rem; }
   .survey-online-dialog .survey-online-modes .survey-button { padding-inline: .4rem; }
   .survey-online-footer .survey-dialog-actions { justify-content: flex-start; }

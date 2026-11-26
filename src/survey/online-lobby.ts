@@ -1,7 +1,7 @@
 import "./online-lobby.css";
 import type { Client, Room } from "colyseus.js";
 import {
-  SURVEY_CODE, SURVEY_ROOM, SURVEY_TEAM_COUNTS, SURVEY_TEAM_SIZES,
+  SURVEY_CODE, SURVEY_ROOM, SURVEY_TEAM_COUNTS, SURVEY_MIN_TEAM_SIZE, SURVEY_MAX_TEAM_SIZE,
   type SurveyOnlineAction, type SurveyRoomView,
 } from "../../shared/survey-online";
 import { renderFruit } from "./fruit-icons";
@@ -82,15 +82,11 @@ export function createSurveyLobby(app: HTMLElement, onUpdate: () => void) {
       <form class="survey-start-form" id="survey-online-form">
         <h2 id="survey-online-title">Играть с друзьями</h2>
         <div class="survey-online-modes" role="group" aria-label="Вход в комнату">
-          <button class="survey-button secondary-action" type="button" data-room-action="create">Создать комнату</button>
+          <button class="survey-button secondary-action" type="button" data-room-action="create">Новая комната</button>
           <button class="survey-button secondary-action" type="button" data-room-action="join">Войти по коду</button>
         </div>
         <label>Ваше имя <input name="name" maxlength="24" required autocomplete="nickname"
           value="${escape(readSession(NAME_KEY) ?? "")}" autofocus></label>
-        <div class="survey-online-settings" data-room-fields="create">
-          <label>Количество команд <select name="teamCount">${SURVEY_TEAM_COUNTS.map((count) => `<option>${count}</option>`).join("")}</select></label>
-          <label>Игроков в команде <select name="teamSize">${SURVEY_TEAM_SIZES.map((size) => `<option>${size}</option>`).join("")}</select></label>
-        </div>
         <label data-room-fields="join">Код комнаты <input name="code" maxlength="7" autocapitalize="characters" spellcheck="false"
           pattern="[sS][0-9A-Fa-f]{6}" title="Семь символов, начиная с S" autocomplete="off" required
           value="${escape(prefill?.slice(0, 7) ?? "")}" placeholder="S123ABC"></label>
@@ -175,12 +171,12 @@ export function createSurveyLobby(app: HTMLElement, onUpdate: () => void) {
       }
       view = next;
       removeDialog();
-      onUpdate();
+      redrawRoom();
     });
     socket.onMessage<string>("rejected", (message) => {
       if (room !== socket) return;
       error = message;
-      onUpdate();
+      redrawRoom();
     });
     socket.onLeave(() => {
       if (room !== socket) return;
@@ -280,6 +276,17 @@ export function createSurveyLobby(app: HTMLElement, onUpdate: () => void) {
     if (previousError) onUpdate();
   }
 
+  function redrawRoom() {
+    const focused = document.activeElement;
+    const action = focused instanceof HTMLButtonElement ? focused.dataset.roomAction : undefined;
+    const team = focused instanceof HTMLButtonElement ? focused.dataset.roomTeam : undefined;
+    onUpdate();
+    if (!action || document.activeElement !== document.body) return;
+    const replacement = [...app.querySelectorAll<HTMLButtonElement>("button[data-room-action]")]
+      .find((button) => button.dataset.roomAction === action && button.dataset.roomTeam === team && !button.disabled);
+    replacement?.focus({ preventScroll: true });
+  }
+
   function connectionMarkup() {
     if (!view) return "";
     return `${pending ? '<p class="survey-online-state" role="status">Восстанавливаем связь…</p>' : ""}
@@ -292,11 +299,19 @@ export function createSurveyLobby(app: HTMLElement, onUpdate: () => void) {
 
   function lobbyMarkup() {
     if (!view) return "";
-    const { code, teams, teamCount, teamSize, you, owner } = view;
+    const { code, teams, teamSize, you, owner } = view;
     const isHost = you === owner;
-    const connected = teams.flatMap(({ players }) => players).filter((member) => member.connected).length;
-    const seats = teamCount * teamSize;
-    const canStart = connected === seats;
+    const canEdit = !!room && !pending;
+    const roster = teams.map((team, index) => ({
+      ...team,
+      capacity: team.capacity ?? teamSize,
+      fruit: team.fruitIndex ?? index,
+      connected: team.players.filter((member) => member.connected).length,
+    }));
+    const connected = roster.reduce((sum, team) => sum + team.connected, 0);
+    const occupied = roster.reduce((sum, team) => sum + team.players.length, 0);
+    const seats = roster.reduce((sum, team) => sum + team.capacity, 0);
+    const canStart = roster.every((team) => team.connected >= SURVEY_MIN_TEAM_SIZE);
     return `<main class="survey-wrap survey-online-lobby" aria-labelledby="survey-online-lobby-title">
       <header class="survey-online-heading">
         <div><h1 id="survey-online-lobby-title">Комната ожидания</h1><p class="survey-muted" role="status">Подключились ${connected} из ${seats}</p></div>
@@ -310,19 +325,29 @@ export function createSurveyLobby(app: HTMLElement, onUpdate: () => void) {
         </div>
       </header>
       <div class="survey-online-teams">
-        ${teams.map(({ name, players }, index) => `<section class="survey-online-team survey-team-${index}" aria-label="${escape(name)}">
-          <h2>${renderFruit(index)}${escape(name)}</h2>
-          <ol>${Array.from({ length: teamSize }, (_, seat) => {
+        ${roster.map(({ name, players, capacity, fruit }) => `<section class="survey-online-team survey-team-${fruit}" aria-label="${escape(name)}">
+          <h2>${renderFruit(fruit)}${escape(name)}</h2>
+          <ol>${Array.from({ length: capacity }, (_, seat) => {
             const member = players[seat];
             if (!member) return '<li class="survey-online-empty">Свободное место</li>';
             const tag = [member.id === you ? "Вы" : "", member.id === owner ? "Ведущий" : "", member.connected ? "" : "Переподключается"]
               .filter(Boolean).join(" · ");
             return `<li><strong>${escape(member.name)}</strong>${tag ? `<span>${tag}</span>` : ""}</li>`;
           }).join("")}</ol>
+          ${isHost ? `<div class="survey-online-slot-actions" aria-label="Места команды «${escape(name)}»" role="group">
+            <button class="survey-button secondary-action" type="button" data-room-action="remove-slot" data-room-team="${fruit}"
+              aria-label="Убрать место: ${escape(name)}" ${canEdit && capacity > Math.max(SURVEY_MIN_TEAM_SIZE, players.length) ? "" : "disabled"}>− Место</button>
+            <button class="survey-button secondary-action" type="button" data-room-action="add-slot" data-room-team="${fruit}"
+              aria-label="Добавить место: ${escape(name)}" ${canEdit && capacity < SURVEY_MAX_TEAM_SIZE ? "" : "disabled"}>+ Место</button>
+          </div>${roster.length > SURVEY_TEAM_COUNTS[0] ? `<button class="survey-online-remove-team" type="button"
+              data-room-action="remove-team" data-room-team="${fruit}" aria-label="Убрать команду: ${escape(name)}"
+              ${canEdit && occupied <= seats - capacity ? "" : "disabled"}>Убрать команду</button>` : ""}` : ""}
         </section>`).join("")}
       </div>
+      ${isHost && roster.length < SURVEY_TEAM_COUNTS[1] ? `<button class="survey-button secondary-action survey-online-add-team"
+        type="button" data-room-action="add-team" ${canEdit ? "" : "disabled"}>Добавить команду</button>` : ""}
       <footer class="survey-online-footer">
-        <p class="survey-muted">${canStart ? isHost ? "Все в сборе." : "Ожидаем запуска от ведущего." : "Партия начнётся, когда соберутся все игроки."}</p>
+        <p class="survey-muted">${canStart ? isHost ? "Можно начинать." : "Ожидаем запуска от ведущего." : "Для старта нужно минимум два игрока в каждой команде."}</p>
         <div class="survey-dialog-actions">
           ${room || pending ? '<button class="survey-button secondary-action" type="button" data-room-action="leave">Выйти из комнаты</button>' : ""}
           ${isHost ? `<button class="survey-button primary-action" type="button" data-room-action="start" ${canStart && room && !pending ? "" : "disabled"}>Начать игру</button>` : ""}
@@ -364,11 +389,9 @@ export function createSurveyLobby(app: HTMLElement, onUpdate: () => void) {
       return;
     }
     writeSession(NAME_KEY, name);
-    const teamCount = Number(fields.get("teamCount"));
-    const teamSize = Number(fields.get("teamSize"));
     const creating = mode === "create";
     void connect((client) => creating
-      ? client.create(SURVEY_ROOM, { name, teamCount, teamSize })
+      ? client.create(SURVEY_ROOM, { name })
       : client.joinById(code, { name }));
   });
 
@@ -384,6 +407,10 @@ export function createSurveyLobby(app: HTMLElement, onUpdate: () => void) {
         break;
       case "close": close(); break;
       case "start": send({ type: "start" }); break;
+      case "add-team": send({ type: "add-team" }); break;
+      case "remove-team": send({ type: "remove-team", team: Number(button.dataset.roomTeam) }); break;
+      case "add-slot": send({ type: "resize-team", team: Number(button.dataset.roomTeam), delta: 1 }); break;
+      case "remove-slot": send({ type: "resize-team", team: Number(button.dataset.roomTeam), delta: -1 }); break;
       case "copy-code": void copy("code"); break;
       case "copy-link": void copy("link"); break;
       case "retry": void reconnect(); break;

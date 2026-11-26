@@ -127,17 +127,16 @@ export class SurveyGame {
     if (!Number.isInteger(questionLimit) || questionLimit < 1 || questionLimit > questions.length) {
       throw new Error("Неверное число вопросов в партии.");
     }
-    if (roster && roster.length !== count) {
-      throw new Error("Состав не соответствует числу команд.");
+    if (roster && (roster.length !== count ||
+        roster.some((members) => members.length < MIN_TEAM_SIZE || members.length > MAX_TEAM_SIZE) ||
+        roster.reduce((total, members) => total + members.length, 0) !== playerCount)) {
+      throw new Error("Состав не соответствует числу команд и игроков.");
     }
 
     let nextPlayer = 1;
     this.teams = SURVEY_TEAM_NAMES.slice(0, count).map((name, team) => {
       const size = Math.floor(playerCount / count) + Number(team < playerCount % count);
       const members = roster?.[team];
-      if (members && members.length !== size) {
-        throw new Error("Состав не соответствует числу игроков в команде.");
-      }
       const players = members ? [...members] : Array.from({ length: size }, () => `Игрок ${nextPlayer++}`);
       return { name, players, score: 0 };
     });
