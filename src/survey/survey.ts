@@ -20,8 +20,25 @@ export type TurnResult = Readonly<{
 }>;
 
 const TEAMS = ["Яблоки", "Апельсины", "Сливы"];
+const MIN_TEAMS = 2;
+const MIN_TEAM_SIZE = 2;
+const MAX_TEAM_SIZE = 5;
+export const MIN_SURVEY_PLAYERS = MIN_TEAMS * MIN_TEAM_SIZE;
+export const MAX_SURVEY_PLAYERS = TEAMS.length * MAX_TEAM_SIZE;
 export const MAX_ROUNDS = 2;
 const MAX_ANSWER_LENGTH = 80;
+
+export function surveyTeamCounts(playerCount: number): number[] {
+  if (!Number.isInteger(playerCount)) return [];
+
+  const counts: number[] = [];
+  for (let count = MIN_TEAMS; count <= TEAMS.length; count++) {
+    if (playerCount >= count * MIN_TEAM_SIZE && playerCount <= count * MAX_TEAM_SIZE) {
+      counts.push(count);
+    }
+  }
+  return counts;
+}
 
 export class TurnReadiness {
   private readonly readyPlayers = new Set<number>();
@@ -93,9 +110,15 @@ export class SurveyGame {
     playerCount: number,
     private readonly random: () => number = Math.random,
     readonly questionLimit = questions.length,
+    teamCount?: number,
   ) {
-    if (!Number.isInteger(playerCount) || playerCount < 10 || playerCount > 12) {
-      throw new Error("Для игры нужно от 10 до 12 участников.");
+    const teamCounts = surveyTeamCounts(playerCount);
+    const count = teamCount ?? teamCounts.at(-1);
+    if (!teamCounts.length) {
+      throw new Error(`Для игры нужно от ${MIN_SURVEY_PLAYERS} до ${MAX_SURVEY_PLAYERS} участников.`);
+    }
+    if (count === undefined || !teamCounts.includes(count)) {
+      throw new Error(`Для этого числа игроков выберите ${teamCounts.join(" или ")} команды.`);
     }
     if (!questions.length || questions.some(({ answers }) => answers.length !== 6)) {
       throw new Error("У каждого вопроса должно быть шесть ответов.");
@@ -105,8 +128,8 @@ export class SurveyGame {
     }
 
     let nextPlayer = 1;
-    this.teams = TEAMS.map((name, team) => {
-      const size = Math.floor(playerCount / TEAMS.length) + Number(team < playerCount % TEAMS.length);
+    this.teams = TEAMS.slice(0, count).map((name, team) => {
+      const size = Math.floor(playerCount / count) + Number(team < playerCount % count);
       const players = Array.from({ length: size }, () => `Игрок ${nextPlayer++}`);
       return { name, players, score: 0 };
     });

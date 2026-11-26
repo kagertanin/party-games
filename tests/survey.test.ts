@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { SurveyGame, TurnReadiness, type Question } from "../src/survey/survey";
+import { MAX_SURVEY_PLAYERS, MIN_SURVEY_PLAYERS, SurveyGame, surveyTeamCounts, TurnReadiness, type Question } from "../src/survey/survey";
 import { renderTurnSpiral } from "../src/survey/turn-spiral";
 import { getReadinessClockAtMs, getTurnTiming, READINESS_MS } from "../src/survey/turn-timing";
 
@@ -27,7 +27,54 @@ test("10–12 players are evenly assigned to three teams", () => {
   assert.deepEqual(new SurveyGame([question], 10).teams.map((t) => t.players.length), [4, 3, 3]);
   assert.deepEqual(new SurveyGame([question], 11).teams.map((t) => t.players.length), [4, 4, 3]);
   assert.deepEqual(new SurveyGame([question], 12).teams.map((t) => t.players.length), [4, 4, 4]);
-  assert.throws(() => new SurveyGame([question], 13));
+});
+
+test("4–15 players can form two or three balanced teams of two to five", () => {
+  assert.equal(MIN_SURVEY_PLAYERS, 4);
+  assert.equal(MAX_SURVEY_PLAYERS, 15);
+  assert.deepEqual(surveyTeamCounts(4), [2]);
+  assert.deepEqual(surveyTeamCounts(5), [2]);
+  assert.deepEqual(surveyTeamCounts(6), [2, 3]);
+  assert.deepEqual(surveyTeamCounts(10), [2, 3]);
+  assert.deepEqual(surveyTeamCounts(11), [3]);
+  assert.deepEqual(surveyTeamCounts(15), [3]);
+  assert.deepEqual(new SurveyGame([question], 4).teams.map(({ players }) => players.length), [2, 2]);
+  assert.deepEqual(new SurveyGame([question], 15).teams.map(({ players }) => players.length), [5, 5, 5]);
+  assert.deepEqual(new SurveyGame([question], 10, Math.random, 1, 2).teams.map(({ players }) => players.length), [5, 5]);
+
+  for (let size = MIN_SURVEY_PLAYERS; size <= MAX_SURVEY_PLAYERS; size++) {
+    const options = surveyTeamCounts(size);
+    assert.equal(new SurveyGame([question], size).teams.length, options.at(-1));
+    for (const count of options) {
+      const { teams } = new SurveyGame([question], size, Math.random, 1, count);
+      const sizes = teams.map(({ players }) => players.length);
+      assert.ok(sizes.every((teamSize) => teamSize >= 2 && teamSize <= 5));
+      assert.ok(Math.max(...sizes) - Math.min(...sizes) <= 1);
+      assert.deepEqual(teams.flatMap(({ players }) => players),
+        Array.from({ length: size }, (_, index) => `Игрок ${index + 1}`));
+    }
+  }
+
+  assert.throws(() => new SurveyGame([question], 3));
+  assert.throws(() => new SurveyGame([question], 16));
+  assert.throws(() => new SurveyGame([question], 6.5));
+  assert.throws(() => new SurveyGame([question], 5, Math.random, 1, 3));
+  assert.throws(() => new SurveyGame([question], 15, Math.random, 1, 2));
+});
+
+test("with two teams each question ends after four turns and starting teams alternate", () => {
+  const game = new SurveyGame([question, question, question], 4);
+  for (let questionIndex = 0; questionIndex < 3; questionIndex++) {
+    const first = questionIndex % 2;
+    for (let turn = 0; turn < 4; turn++) {
+      assert.equal(game.phase, "turn");
+      game.finishTurn();
+    }
+    assert.equal(game.phase, "reveal");
+    assert.deepEqual(game.turnHistory.map(({ team }) => team), [first, 1 - first, first, 1 - first]);
+    game.nextQuestion();
+  }
+  assert.equal(game.phase, "results");
 });
 
 test("six different hits complete the board in two circuits, with each answer credited to its team", () => {

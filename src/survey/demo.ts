@@ -1,5 +1,5 @@
 import "./demo.css";
-import { MAX_ROUNDS, SurveyGame, TurnReadiness, type TurnResult } from "./survey";
+import { MAX_ROUNDS, MAX_SURVEY_PLAYERS, MIN_SURVEY_PLAYERS, SurveyGame, TurnReadiness, surveyTeamCounts, type TurnResult } from "./survey";
 import { demoGuesses, questions } from "./questions";
 import { renderTurnSpiral } from "./turn-spiral";
 import { renderFruit } from "./fruit-icons";
@@ -8,6 +8,12 @@ import { getReadinessClockAtMs, getTurnTiming, READINESS_MS } from "./turn-timin
 import { mountHoldConfirm } from "./hold-confirm";
 import { QuestionBallot, QUESTION_BALLOT_CLOCK_MS, QUESTIONS_PER_MATCH } from "./question-ballot";
 import { animateQuestionChoice } from "./question-transition";
+
+const DEMO_PLAYER_COUNT = 12;
+const PLAYER_COUNTS = Array.from(
+  {length: MAX_SURVEY_PLAYERS - MIN_SURVEY_PLAYERS + 1}, (_, index) => MIN_SURVEY_PLAYERS + index,
+);
+
 const escape = (text: string) =>
   text.replace(/[&<>"']/g, (char) => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
@@ -20,7 +26,8 @@ function clockText(milliseconds: number) {
 
 export function mountSurveyDemo(app: HTMLElement) {
   let game: SurveyGame | null = null;
-  let playerCount = 12;
+  let playerCount = DEMO_PLAYER_COUNT;
+  let isDemo = true;
   let player = 0;
   let viewingTeam: number | null = 0;
   let expandedTeam: number | null = 0;
@@ -34,7 +41,7 @@ export function mountSurveyDemo(app: HTMLElement) {
   let proposalError = "";
   let readiness: TurnReadiness | null = null;
   let resolving: TurnResult | null = null;
-  document.title = "Угадай ответ · Party Games";
+  document.title = "Сто к одному · Party Games";
 
   const timeLeft = () => Math.max(0, deadline - performance.now());
   const turnTiming = (match: SurveyGame) =>
@@ -127,7 +134,7 @@ export function mountSurveyDemo(app: HTMLElement) {
           <span class="survey-question-votes" aria-label="Голосов: ${ballot.count(id)}">${ballot.count(id)}</span>
         </button>`).join("")}
       </div>
-      <label class="survey-ballot-voter">Кто голосует в демо
+      <label class="survey-ballot-voter">${isDemo ? "Кто голосует в демо" : "Кто голосует"}
         <select id="survey-question-voter">
           ${match.teams.flatMap((team) => team.players.map((name) => ({name, team: team.name})))
             .map(({name, team}, index) => `<option value="${index}" ${index === questionVoter ? "selected" : ""}>${escape(name)} · ${escape(team)}${ballot.votes.has(index) ? " ✓" : ""}</option>`).join("")}
@@ -219,9 +226,9 @@ export function mountSurveyDemo(app: HTMLElement) {
       ` : ""}
       <div class="survey-step"><h3>${ownTurn ? "Выберите ответ команды" : "Варианты ответа команды"}</h3><small>Голосов: ${match.votes.size}/${team.players.length}</small></div>
       <div class="survey-proposals">${proposalCards(match, showClock)}</div>
-      ${ownTurn ? `
+      ${ownTurn && isDemo && !votingOnly ? `
         <div class="survey-turn-actions">
-          <button class="survey-button secondary-action" data-survey="suggest" ${votingOnly ? "hidden" : ""}>Примеры от команды</button>
+          <button class="survey-button secondary-action" data-survey="suggest">Примеры от команды</button>
         </div>` : ""}
     </section>`;
   }
@@ -268,27 +275,38 @@ export function mountSurveyDemo(app: HTMLElement) {
     </div>`;
   }
 
+  function teamOptions(size: number, current?: number) {
+    const counts = surveyTeamCounts(size);
+    const selected = current !== undefined && counts.includes(current) ? current : counts.at(-1);
+    return counts.map((count) => `<option value="${count}" ${count === selected ? "selected" : ""}>${count}</option>`).join("");
+  }
+
   function setup() {
     return `<main class="survey-wrap survey-setup">
-      <div class="survey-intro">
-        <p class="survey-kicker">Демопартия · 10–12 участников</p>
-        <h1>Угадай<br><em>ответ.</em></h1>
-        <p>Шесть популярных ответов скрыты на табло. Предлагайте свои варианты, голосуйте внутри команды и открывайте строки.</p>
+      <section class="survey-intro" aria-labelledby="survey-title">
+        <h1 id="survey-title"><span class="survey-title-line">Сто к</span> <span class="survey-title-line">одному</span></h1>
+        <p class="survey-player-range">${MIN_SURVEY_PLAYERS}–${MAX_SURVEY_PLAYERS} игроков</p>
+        <p class="survey-team-limit">До 3 команд, до 5 в каждой</p>
+        <p class="survey-lead">Угадайте самые популярные ответы из опроса.</p>
         <div class="survey-start">
-          <label>Игроков <select id="survey-size" aria-label="Число игроков">${[10, 11, 12].map((size) => `<option ${size === playerCount ? "selected" : ""}>${size}</option>`).join("")}</select></label>
-          <button class="survey-button primary-action" data-survey="start">Начать демопартию</button>
+          <button class="survey-button primary-action" data-survey="setup" type="button">Играть</button>
+          <button class="survey-button secondary-action" data-survey="demo" type="button">Демо</button>
         </div>
-        <p class="survey-muted">В демо можно переключаться между игроками и командами на одном экране.</p>
-      </div>
-      <aside class="survey-preview">
-        <div class="survey-board-heading"><h2>Как проходит партия</h2></div>
-        <ol>
-          <li><strong>Три вопроса</strong><span>Перед каждым все голосуют за одну из трёх тем.</span></li>
-          <li><strong>Три команды по очереди</strong><span>На готовность — до 20 секунд. Все готовы — ход начинается сразу.</span></li>
-          <li><strong>На первые ходы — по 3 минуты</strong><span>Отсчёт виден в последние 30 секунд. Дальше на ход одна минута, последние 10 секунд — голосование.</span></li>
-          <li><strong>Два круга на вопрос</strong><span>Оставшиеся ответы открываются без начисления очков.</span></li>
-        </ol>
-      </aside>
+      </section>
+      <img class="survey-illustration" src="/survey-illustration.webp" width="950" height="712"
+        alt="На вопрос «Что берут на пляж?» игрок отвечает «Крем». Третья карточка открывается и приносит его команде 18 очков.">
+      <dialog class="survey-start-dialog" id="survey-start-dialog" aria-labelledby="survey-start-title">
+        <form class="survey-start-form" id="survey-start-form">
+          <h2 id="survey-start-title">Соберите команды</h2>
+          <p>Партия на одном экране. Передавайте управление друг другу по очереди.</p>
+          <label>Игроков <select id="survey-size" name="size" autofocus>${PLAYER_COUNTS.map((size) => `<option value="${size}" ${size === playerCount ? "selected" : ""}>${size}</option>`).join("")}</select></label>
+          <label>Команд <select id="survey-team-count" name="teams">${teamOptions(playerCount)}</select></label>
+          <div class="survey-dialog-actions">
+            <button class="survey-button primary-action" type="submit">Начать партию</button>
+            <button class="survey-button secondary-action" data-survey="close-setup" type="button">Назад</button>
+          </div>
+        </form>
+      </dialog>
     </main>`;
   }
 
@@ -310,9 +328,10 @@ export function mountSurveyDemo(app: HTMLElement) {
   function render() {
     cancelHold();
     app.classList.add("survey-app");
+    app.classList.toggle("is-landing", !game);
     app.innerHTML = `
-      <header class="survey-header"><a href="./" class="survey-brand">Party Games</a><span>Угадай ответ</span>
-        ${game && game.phase !== "results" ? `<label class="survey-view-choice">Команда в демо
+      <header class="survey-header"><a href="./" class="survey-brand">Party Games</a>${game ? "<span>Сто к одному</span>" : ""}
+        ${isDemo && game && game.phase !== "results" ? `<label class="survey-view-choice">Команда в демо
           <select id="survey-view-team">
             ${game.teams.map((team, index) => `<option value="${index}" ${viewingTeam === index ? "selected" : ""}>${escape(team.name)}</option>`).join("")}
             <option value="auto" ${viewingTeam === null ? "selected" : ""}>Все по очереди</option>
@@ -337,6 +356,16 @@ export function mountSurveyDemo(app: HTMLElement) {
     questionVoter = 0;
     render();
     app.querySelector<HTMLElement>("#survey-ballot-title")?.focus({preventScroll: true});
+  }
+
+  function startMatch(size: number, demo: boolean, teamCount?: number) {
+    game = new SurveyGame(questions, size, Math.random, QUESTIONS_PER_MATCH, teamCount);
+    playerCount = size;
+    isDemo = demo;
+    viewingTeam = demo ? 0 : null;
+    expandedTeam = 0;
+    usedQuestions.clear();
+    startQuestionBallot();
   }
 
   async function closeQuestionBallot(now: number) {
@@ -530,7 +559,11 @@ export function mountSurveyDemo(app: HTMLElement) {
   });
   app.addEventListener("change", (event) => {
     if (!(event.target instanceof HTMLSelectElement)) return;
-    if (event.target.id === "survey-size") playerCount = Number(event.target.value);
+    if (event.target.id === "survey-size") {
+      const teams = app.querySelector<HTMLSelectElement>("#survey-team-count");
+      if (teams) teams.innerHTML = teamOptions(Number(event.target.value), Number(teams.value));
+      return;
+    }
     if (!game || changingQuestion || resolving) return;
     if (event.target.id === "survey-question-voter" && questionBallot) {
       questionVoter = Number(event.target.value);
@@ -548,7 +581,15 @@ export function mountSurveyDemo(app: HTMLElement) {
     }
   });
   app.addEventListener("submit", (event) => {
-    if (!(event.target instanceof HTMLFormElement) || event.target.id !== "survey-propose") return;
+    if (!(event.target instanceof HTMLFormElement)) return;
+    if (event.target.id === "survey-start-form" && !game) {
+      event.preventDefault();
+      const settings = new FormData(event.target);
+      app.querySelector<HTMLDialogElement>("#survey-start-dialog")?.close();
+      startMatch(Number(settings.get("size")), false, Number(settings.get("teams")));
+      return;
+    }
+    if (event.target.id !== "survey-propose") return;
     event.preventDefault();
     if (!game || questionBallot || changingQuestion || !canAct(game) || timeLeft() <= turnTiming(game).voteOnlyMs) { refreshTimer(); return; }
     const answer = draft.trim();
@@ -571,15 +612,14 @@ export function mountSurveyDemo(app: HTMLElement) {
     const button = event.target.closest<HTMLButtonElement>("button");
     if (!button || button.disabled) return;
     const action = button.dataset.survey;
-    if (action === "start") {
-      game = new SurveyGame(questions, playerCount, Math.random, QUESTIONS_PER_MATCH);
-      viewingTeam = 0;
-      expandedTeam = 0;
-      usedQuestions.clear();
-      startQuestionBallot();
+    if (!game) {
+      const dialog = app.querySelector<HTMLDialogElement>("#survey-start-dialog");
+      if (action === "setup") dialog?.showModal();
+      if (action === "close-setup") dialog?.close();
+      if (action === "demo") startMatch(DEMO_PLAYER_COUNT, true);
       return;
     }
-    if (!game || resolving || changingQuestion) return;
+    if (resolving || changingQuestion) return;
     if (button.dataset.expandTeam !== undefined) {
       const team = Number(button.dataset.expandTeam);
       expandedTeam = expandedTeam === team ? null : team;
@@ -607,7 +647,7 @@ export function mountSurveyDemo(app: HTMLElement) {
       }
       return;
     }
-    if (action === "suggest" && canAct(game) && timeLeft() > turnTiming(game).voteOnlyMs) addExamples(game);
+    if (action === "suggest" && isDemo && canAct(game) && timeLeft() > turnTiming(game).voteOnlyMs) addExamples(game);
     if (action === "next-question") {
       game.nextQuestion();
       if (game.phase === "turn") startQuestionBallot();
@@ -623,7 +663,7 @@ export function mountSurveyDemo(app: HTMLElement) {
       viewingTeam = 0;
       player = 0;
       render();
-      document.querySelector<HTMLButtonElement>("[data-survey='start']")?.focus();
+      app.querySelector<HTMLButtonElement>("[data-survey='setup']")?.focus();
       return;
     }
     if (!canAct(game)) return;
