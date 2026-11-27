@@ -2,6 +2,7 @@ import { Room, type Client } from "@colyseus/core";
 import {
   office,
   models,
+  copyRange,
   rad,
   fits,
   target,
@@ -11,20 +12,25 @@ import {
   type Phase,
   type Snapshot,
 } from "../shared/hide/world.js";
+import { shotPath } from "../shared/hide/shot.js";
 import { MAX_BATCH_STEPS, STEP_SECONDS } from "../shared/hide/movement.js";
+
+import { defaultHideSettings, isHideSetting, validSetting } from "../shared/hide/settings.js";
 
 interface InputStream {
   ack: number;
   received: number;
   queue: Input[];
   credit: number;
+  lastBatchAt: number;
 }
 function inputStream(): InputStream {
-  return { ack: 0, received: 0, queue: [], credit: 0 };
+  return { ack: 0, received: 0, queue: [], credit: 0, lastBatchAt: 0 };
 }
 function readInput(v: Input | undefined): Input | undefined {
   if (!v || ![v.forward, v.side, v.yaw, v.pitch].every(Number.isFinite)) return;
-  return { forward: clamp(v.forward, -1, 1), side: clamp(v.side, -1, 1),
+  return { jump: Number.isSafeInteger(v.jump) && v.jump! > 0 ? v.jump : 0,
+    forward: clamp(v.forward, -1, 1), side: clamp(v.side, -1, 1),
     yaw: v.yaw % (2 * Math.PI), pitch: clamp(v.pitch, -1.48, 1.48) };
 }
 const idle = (): Input => ({ forward: 0, side: 0, yaw: 0, pitch: 0 });
@@ -36,7 +42,7 @@ export class HideRoom extends Room {
   private inputs = new Map<string, Input>();
   private streams = new Map<string, InputStream>();
   private shotAt = new Map<string, number>();
-  private reload = new Map<string, number>();
+  private settings = { ...defaultHideSettings };
   private history: { at: number; players: Player[] }[] = [];
   private phase: Phase = "lobby";
   private host = "";
@@ -45,6 +51,13 @@ export class HideRoom extends Room {
   private ticks = 0;
   onCreate() {
     this.onMessage("sync", (c) => this.sendView(c));
+    this.onMessage("settings", (client, change) => {
+      if (this.phase !== "lobby" || client.sessionId !== this.host) return;
+      const key = change?.key;
+      if (!isHideSetting(key) || !validSetting(key, change.value)) return;
+      this.settings[key] = change.value;
+      this.publish();
+    });
     this.onMessage("role", (c, v) => {
       if (this.phase !== "lobby" || typeof v?.hunter !== "boolean") return;
       if (v.id !== c.sessionId && this.host !== c.sessionId) return;
@@ -70,22 +83,23 @@ export class HideRoom extends Room {
         const spawn = spots[i % spots.length];
         Object.assign(p, {
           x: spawn.at[0],
+          y: 0, vy: 0, lastJump: 0,
           z: spawn.at[2] + Math.floor(i / spots.length) * 0.9,
           yaw: spawn.yaw * rad,
           pitch: 0,
           facing: 0,
           form: "",
           alive: true,
-          ammo: 6,
+          foundAt: 0,
+          ammo: this.settings.shotsPerHunter,
         });
         this.inputs.set(p.id, { ...idle(), yaw: p.yaw });
         this.streams.set(p.id, inputStream());
       }
       this.history = [];
-      this.reload.clear();
       this.shotAt.clear();
       this.phase = "hide";
-      this.until = Date.now() + 120000;
+      this.until = Date.now() + this.settings.hideSeconds * 1000;
       this.publish();
     });
     this.onMessage("again", (c) => {
@@ -121,6 +135,7 @@ export class HideRoom extends Room {
         if (!input) return;
         inputs.push(input);
       }
+      stream.lastBatchAt = Date.now();
       stream.received += inputs.length;
       stream.queue.push(...inputs);
       // Discard stale motion following a long WebSocket stall. The next ack
@@ -137,7 +152,6 @@ export class HideRoom extends Room {
         const now = Date.now();
         if (!p.ammo || now - (this.shotAt.get(p.id) ?? 0) < 240) return;
         this.shotAt.set(p.id, now);
-        if (p.ammo === 6) this.reload.set(p.id, now + 5000);
         p.ammo--;
         const at = clamp(
           Number.isFinite(v?.seen) ? v.seen : now,
@@ -147,20 +161,19 @@ export class HideRoom extends Room {
         const past = [...this.history]
           .reverse()
           .find((h) => h.at <= at)?.players;
-        const hit = this.players.get(
-          target(p, past ?? [...this.players.values()]).id,
-        );
+        const ray = target(p, past ?? [...this.players.values()]);
+        const hit = this.players.get(ray.id);
         const found = Boolean(hit?.alive);
         if (hit && found) {
           hit.alive = false;
-          p.ammo = 6;
-          this.reload.delete(p.id);
+          hit.foundAt = now;
         }
+        this.broadcast("shot", shotPath(p, ray.distance, found ? ray.id : ""));
         c.send("feedback", found ? "Найден игрок!" : "Промах");
         this.checkEnd();
       } else {
-        const t = target(p);
-        if (t.prop < 0 || t.distance > 4)
+        const t = target(p, [], copyRange);
+        if (t.prop < 0)
           return c.send("feedback", "Подойдите и наведитесь на предмет");
         const prop = office.props[t.prop];
         const next = { ...p, form: prop.id, facing: (prop.yaw ?? 0) * rad };
@@ -191,7 +204,7 @@ export class HideRoom extends Room {
       pitch: 0,
       facing: 0,
       form: "",
-      ammo: 6,
+      ammo: this.settings.shotsPerHunter,
     });
     this.inputs.set(id, idle());
     this.streams.set(id, inputStream());
@@ -237,7 +250,7 @@ export class HideRoom extends Room {
     if (this.phase !== "hunt" && this.phase !== "hide") return;
     const all = [...this.players.values()];
     if (!all.some((p) => !p.hunter && p.alive)) this.finish("Водящие");
-    else if (!all.some((p) => p.hunter)) this.finish("Прячущиеся");
+    else if (!all.some((p) => p.hunter && p.ammo > 0)) this.finish("Прячущиеся");
   }
   private finish(winner: string) {
     this.winner = winner;
@@ -250,8 +263,12 @@ export class HideRoom extends Room {
     if (now >= this.until) {
       if (this.phase === "hide") {
         this.phase = "hunt";
-        this.until = now + 300000;
-      } else this.finish("Прячущиеся");
+        this.until = now + this.settings.huntSeconds * 1000;
+      } else {
+        this.finish("Прячущиеся");
+        this.publish();
+        return;
+      }
     }
     for (const p of this.players.values()) {
       if (this.active(p)) {
@@ -267,13 +284,15 @@ export class HideRoom extends Room {
           }
           stream.credit = Math.max(0, stream.credit - count);
           stream.ack = stream.received - stream.queue.length;
+          // A suspended tab stops producing inputs. Keep gravity authoritative
+          // without extrapolating the player's last WASD or jump press.
+          if (!count && ((p.y ?? 0) > 0 || p.vy) && now - stream.lastBatchAt > 250)
+            walk(p, { ...idle(), yaw: p.yaw, pitch: p.pitch }, dt);
         } else {
           walk(p, this.inputs.get(p.id)!, dt);
         }
-      }
-      if (p.ammo < 6 && now >= (this.reload.get(p.id) ?? Infinity)) {
-        p.ammo++;
-        this.reload.set(p.id, now + 5000);
+      } else if (!p.online && p.alive && (p.y ?? 0) > 0 && (this.phase === "hide" || this.phase === "hunt")) {
+        walk(p, { ...idle(), yaw: p.yaw, pitch: p.pitch }, dt);
       }
     }
     this.history.push({
@@ -288,6 +307,7 @@ export class HideRoom extends Room {
     const concealed =
       this.phase === "hide" && this.players.get(c.sessionId)?.hunter;
     const view: Snapshot = {
+      settings: this.settings,
       ack: this.streams.get(c.sessionId)?.ack ?? 0,
       phase: this.phase,
       host: this.host,

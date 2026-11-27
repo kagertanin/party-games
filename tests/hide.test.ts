@@ -1,12 +1,14 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { setTimeout as wait } from "node:timers/promises";
+import type { Shot } from "../shared/hide/shot";
 import { Client, type Room } from "colyseus.js";
 import { matchMaker } from "@colyseus/core";
 import { startServer } from "../server/index.js";
 import {
   office,
   models,
+  copyRange,
   target,
   eye,
   type Snapshot,
@@ -40,9 +42,19 @@ test("Brightline Offices has all models and a copyable object at the hider entra
     Math.hypot(dx, dz),
   );
   assert.equal(office.props[target(me).prop].id, bin.id);
+  // Both sides of the nearby grid-cell boundary must see the same prop as
+  // a full-length ray; the reticle and copy action use this shorter query.
+  for (const x of [-16.01, -15.99, -14]) {
+    me.x = x;
+    me.yaw = Math.atan2(me.x - bin.at[0], me.z - bin.at[2]);
+    me.pitch = Math.atan2(models[bin.id].size[1] / 2 - eye(me), Math.hypot(me.x - bin.at[0], me.z - bin.at[2]));
+    const full = target(me);
+    assert.ok(full.distance <= copyRange);
+    assert.deepEqual(target(me, [], copyRange), full);
+  }
 });
 test(
-  "twelve clients can play eleven against one, copy, shoot, refill and replay",
+  "twelve clients can play eleven against one, copy, shoot and replay",
   { timeout: 15000 },
   async (t) => {
     const server = await startServer(0),
@@ -55,7 +67,11 @@ test(
       await Promise.allSettled(rooms.map((r) => r.leave()));
       await server.gracefullyShutdown(false);
     });
+    const shots = new Map<Room, Shot[]>();
     function listen(r: Room) {
+      const log: Shot[] = [];
+      shots.set(r, log);
+      r.onMessage("shot", (event: Shot) => log.push(event));
       rooms.push(r);
       r.onMessage("view", (v: Snapshot) => states.set(r, v));
       r.onMessage("feedback", () => {});
@@ -80,7 +96,7 @@ test(
     host.send("start");
     const hidden = await until(host, (s) => s.phase === "hide");
     assert.equal(hidden.players.length, 11);
-    assert.ok(hidden.until - hidden.now > 119000);
+    assert.ok(hidden.until - hidden.now > 59000 && hidden.until - hidden.now <= 60000);
     const me = (await until(hider, (s) => s.phase === "hide")).players.find(
       (p) => p.id === hider.sessionId,
     )!;
@@ -119,6 +135,9 @@ test(
       host,
       (s) => s.players.find((p) => p.id === host.sessionId)?.ammo === 5,
     );
+    assert.equal(shots.get(host)!.length, 1);
+    assert.deepEqual(shots.get(hider), shots.get(host));
+    assert.equal(shots.get(host)![0].hit, "");
     await wait(350);
     host.send("input", {
       forward: 0,
@@ -128,8 +147,21 @@ test(
     });
     host.send("use");
     const result = await until(host, (s) => s.phase === "results");
+    await until(hider, s => s.phase === "results");
+    for (const participant of [hider, host]) {
+      const log = shots.get(participant)!;
+      assert.equal(log.length, 2);
+      assert.equal(log[1].hit, hider.sessionId);
+      assert.equal(log[1].shooter, host.sessionId);
+      assert.equal(log[1].impact, true);
+      assert.ok(log[1].end.every(Number.isFinite));
+    }
+    const found = result.players.find(p => p.id === hider.sessionId)!;
+    assert.equal(found.alive, false);
+    assert.equal(found.form, "furniture_trashcan");
+    assert.ok(found.foundAt && result.now >= found.foundAt);
     assert.equal(result.winner, "Водящие");
-    assert.equal(result.players.find((p) => p.id === host.sessionId)?.ammo, 6);
+    assert.equal(result.players.find((p) => p.id === host.sessionId)?.ammo, 4);
     host.send("again");
     await until(host, (s) => s.phase === "lobby");
   },

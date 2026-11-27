@@ -6,6 +6,7 @@ import {
   models,
   cameraBoom,
   cameraDistance,
+  copyRange,
   rad,
   eye,
   target,
@@ -16,6 +17,8 @@ import {
 } from "../../shared/hide/world";
 
 import type { MoveBatch } from "../../shared/hide/movement";
+import { FoundEffect, ShotEffects, foundView, pistolArm } from "./shots";
+import { revealDuration, type Shot } from "../../shared/hide/shot";
 import { LocalMotion, RemoteMotion } from "./motion";
 
 const palette: Record<string, number> = {
@@ -60,30 +63,12 @@ export async function createScene(
   const sun = new T.DirectionalLight(0xffefd7, 2);
   sun.position.set(-18, 32, 22);
   scene.add(sun);
-  // A small first-person marker makes the hunter's firing direction visible.
-  const blaster = new T.Group();
-  function blasterPart(
-    w: number,
-    h: number,
-    d: number,
-    color: number,
-    x: number,
-    y: number,
-    z: number,
-  ) {
-    const mesh = new T.Mesh(
-      new T.BoxGeometry(w, h, d),
-      new T.MeshStandardMaterial({ color }),
-    );
-    mesh.position.set(x, y, z);
-    blaster.add(mesh);
-  }
-  blasterPart(0.11, 0.12, 0.32, 0x287b78, 0, 0, 0);
-  blasterPart(0.075, 0.08, 0.12, 0xf1b244, 0, 0, -0.2);
-  blasterPart(0.075, 0.12, 0.07, 0x32444d, 0, -0.08, 0.08);
-  camera.add(blaster);
+  const firstPerson = pistolArm();
+  firstPerson.arm.position.set(0.23, -0.26, 0.02);
+  camera.add(firstPerson.arm);
   scene.add(camera);
-  blaster.position.set(0.22, -0.19, -0.43);
+  const effects = new ShotEffects(scene);
+  const recoilAt = new Map<string, number>();
   const templates = new Map<string, T.Object3D>();
   const data = await fetch(
     new URL("../../shared/hide/office-models.bin", import.meta.url),
@@ -239,9 +224,28 @@ export async function createScene(
     pitch = 0,
     phase = "",
     renderedTime = 0;
+  let jumpPress = 0;
+  let boomLength = cameraBoom;
+  let lastCameraFrame = 0;
+  const reticle = canvas.parentElement!.querySelector<HTMLElement>(".hide-aim")!;
+  const aimPoint = new T.Vector3();
+  const viewDirection = new T.Vector3();
   let prediction: LocalMotion | undefined;
   const remotes = new RemoteMotion();
-  const actors = new Map<string, { obj: T.Group; form: string }>();
+  type Actor = {
+    obj: T.Group; form: string; weapon?: ReturnType<typeof pistolArm>; found?: FoundEffect;
+  };
+  const actors = new Map<string, Actor>();
+  let revealView: ReturnType<typeof foundView> | undefined;
+  let lastHit: Shot | undefined;
+  let receivedAt = performance.now();
+  function shot(event: Shot) {
+    const now = performance.now();
+    if (event.hit === id) lastHit = event;
+    const muzzle = event.shooter === id ? firstPerson.muzzle : actors.get(event.shooter)?.weapon?.muzzle;
+    effects.show(event, muzzle, now);
+    recoilAt.set(event.shooter, now);
+  }
   const keys = new Set<string>();
   let touchX = 0,
     touchY = 0;
@@ -250,6 +254,7 @@ export async function createScene(
     forward: T.MathUtils.clamp(Number(keys.has("KeyW")) - Number(keys.has("KeyS")) + touchY, -1, 1),
     yaw,
     pitch,
+    jump: jumpPress,
   });
   function flush() {
     let batch;
@@ -269,6 +274,12 @@ export async function createScene(
     flush();
     use(input(), renderedTime || view?.now || 0);
   }
+  function jump(now = performance.now()) {
+    if (!prediction || self?.hunter) return;
+    sample(now);
+    jumpPress++;
+    flush();
+  }
   function stop() {
     sample(performance.now());
     keys.clear();
@@ -280,6 +291,7 @@ export async function createScene(
     prediction?.resetClock(performance.now());
     if (document.hidden) stop();
   });
+  let pointerClickAt = -Infinity;
   document.addEventListener("pointerlockchange", () => {
     if (!document.pointerLockElement) stop();
   });
@@ -289,8 +301,13 @@ export async function createScene(
     pitch = T.MathUtils.clamp(pitch - dy * 0.0025, -1.48, 1.48);
   }
   window.addEventListener("mousemove", (e) => {
-    if (document.pointerLockElement === canvas)
-      looking(e.movementX, e.movementY, e.timeStamp);
+    if (document.pointerLockElement !== canvas) return;
+    // Chromium can report a click at the locked cursor as a move to (0, 0),
+    // even before pointerlockchange. Preserve intentional flicks in either axis.
+    if (Math.abs(e.timeStamp - pointerClickAt) < 120 &&
+        Math.hypot(e.movementX, e.movementY) > 48 &&
+        Math.abs(e.movementX + e.clientX) <= 1 && Math.abs(e.movementY + e.clientY) <= 1) return;
+    looking(e.movementX, e.movementY, e.timeStamp);
   });
   const movementKeys = new Set(["KeyW", "KeyA", "KeyS", "KeyD"]);
   window.addEventListener("keydown", (e) => {
@@ -298,6 +315,10 @@ export async function createScene(
     if (movementKeys.has(e.code) && !keys.has(e.code)) {
       sample(e.timeStamp);
       keys.add(e.code);
+    }
+    if (e.code === "Space" && !self?.hunter) {
+      e.preventDefault();
+      jump(e.timeStamp);
     }
     if (e.code === "KeyE") action();
   });
@@ -309,6 +330,7 @@ export async function createScene(
   });
   canvas.addEventListener("mousedown", (e) => {
     if (e.button !== 0 || matchMedia("(pointer:coarse)").matches) return;
+    pointerClickAt = e.timeStamp;
     if (document.pointerLockElement !== canvas) {
       canvas.requestPointerLock()?.catch(() => {});
       return;
@@ -335,13 +357,21 @@ export async function createScene(
   function update(v: Snapshot) {
     const me = v.players.find((p) => p.id === id);
     if (!me) return;
+    if (me.alive) {
+      revealView = undefined;
+      lastHit = undefined;
+    }
     const active = me.alive && (v.phase === "hunt" || (v.phase === "hide" && !me.hunter));
     if (!prediction || !active) {
-      yaw = me.yaw;
-      pitch = me.pitch;
+      if (!self || v.phase === "lobby" || (v.phase === "hide" && phase !== "hide")) {
+        yaw = me.yaw;
+        pitch = me.pitch;
+      }
       self = { ...me };
       prediction = active ? new LocalMotion(me, v.ack) : undefined;
       prediction?.resetClock(performance.now());
+      jumpPress = me.lastJump ?? 0;
+      if (me.alive || phase === "lobby") lastCameraFrame = 0;
       keys.clear();
       touchX = touchY = 0;
     } else {
@@ -349,6 +379,7 @@ export async function createScene(
       self = prediction.pose(input());
     }
     remotes.push(v, performance.now());
+    receivedAt = performance.now();
     phase = v.phase;
     view = v;
   }
@@ -357,7 +388,7 @@ export async function createScene(
     const now = performance.now();
     if (
       !view || !self || document.hidden ||
-      !(phase === "hunt" || (phase === "hide" && !self.hunter))
+      !(phase === "hunt" || phase === "results" || (phase === "hide" && !self.hunter))
     ) return;
     if (prediction) {
       const i = input();
@@ -365,14 +396,23 @@ export async function createScene(
       self = prediction.pose(i);
     }
     renderedTime = remotes.at(now);
-    const hunter = !self.alive && view.players.find(p => p.hunter);
+    const serverNow = view.now + now - receivedAt;
+    const watchHunter = !self.alive && phase === "hunt" && serverNow - (self.foundAt ?? 0) > revealDuration + 900;
+    const hunter = watchHunter && view.players.find(p => p.hunter);
     const follow = hunter ? remotes.pose(hunter, renderedTime) : self;
     const angle = follow === self ? yaw : follow.yaw,
       tilt = follow === self ? pitch : follow.pitch;
     camera.rotation.set(tilt, angle, 0, "YXZ");
     camera.position.set(follow.x, eye(follow), follow.z);
-    blaster.visible = follow.hunter;
-    if (!follow.hunter) {
+    firstPerson.arm.visible = follow.hunter;
+    const kick = (who: string) => Math.max(0, 1 - (now - (recoilAt.get(who) ?? -Infinity)) / 140);
+    firstPerson.arm.rotation.x = 0.14 * kick(follow.id);
+    if (!follow.alive && !follow.hunter) {
+      revealView ??= foundView(follow, angle, lastHit);
+      camera.position.copy(revealView.position);
+      camera.lookAt(revealView.focus);
+      reticle.style.translate = "";
+    } else if (!follow.hunter) {
       const forward = direction(angle, tilt),
         at = camera.position.toArray();
       const offset = new T.Vector3(
@@ -381,52 +421,85 @@ export async function createScene(
         -forward[2] * cameraBoom - Math.sin(angle) * 0.65,
       );
       const back = offset.normalize().toArray();
-      camera.position.addScaledVector(offset, cameraDistance(at, back));
-      const aim = target({ ...follow, yaw: angle, pitch: tilt });
-      camera.lookAt(
-        new T.Vector3()
-          .fromArray(at)
-          .addScaledVector(
-            new T.Vector3().fromArray(forward),
-            Math.max(0.25, Math.min(35, aim.distance)),
-          ),
-      );
+      const clearance = cameraDistance(at, back);
+      const elapsed = (now - lastCameraFrame) / 1000;
+      // Pull in immediately to avoid clipping. Ease back out after passing a corner.
+      boomLength = !lastCameraFrame || clearance < boomLength ? clearance :
+        clearance + (boomLength - clearance) * Math.exp(-7 * elapsed);
+      lastCameraFrame = now;
+      camera.position.addScaledVector(offset, boomLength);
+      // Keep the same orientation when a wall retracts the boom or the aim
+      // passes over furniture. Project the actual interaction ray onto the HUD.
+      viewDirection.fromArray(forward);
+      aimPoint.copy(camera.position).addScaledVector(viewDirection, 4)
+        .addScaledVector(offset, -cameraBoom);
+      camera.lookAt(aimPoint);
+      const aim = target({ ...follow, yaw: angle, pitch: tilt }, [], copyRange);
+      if (aim.prop >= 0) {
+        camera.updateMatrixWorld();
+        aimPoint.fromArray(at).addScaledVector(viewDirection, aim.distance).project(camera);
+        const pixelRatio = renderer.getPixelRatio();
+        reticle.style.translate = (aimPoint.x * canvas.width / (2 * pixelRatio)) + "px " +
+          (-aimPoint.y * canvas.height / (2 * pixelRatio)) + "px";
+      } else if (reticle.style.translate) {
+        reticle.style.translate = "";
+      }
+    } else if (reticle.style.translate) {
+      reticle.style.translate = "";
     }
     for (const [key, a] of actors)
-      if (!view.players.some((p) => p.id === key && p.alive)) {
+      if (!view.players.some((p) => p.id === key)) {
+        a.found?.dispose();
         scene.remove(a.obj);
         actors.delete(key);
       }
     for (const p of view.players) {
-      if (!p.alive) continue;
       let a = actors.get(p.id);
       const visual = p.form ? disguiseKey(p.form, p.facing) : "";
-      if (!a || a.form !== visual) {
-        if (a) scene.remove(a.obj);
+      if (!a || a.form !== visual || Boolean(a.weapon) !== p.hunter) {
+        if (a) {
+          a.found?.dispose();
+          scene.remove(a.obj);
+        }
         const obj = new T.Group();
         obj.add((disguises.get(visual) ?? templates.get(p.form) ?? actor).clone());
-        obj.position.set(p.x, 0, p.z);
-        a = { obj, form: visual };
+        const weapon = p.hunter ? pistolArm() : undefined;
+        if (weapon) {
+          weapon.arm.position.set(0.26, 1.22, 0);
+          obj.add(weapon.arm);
+        }
+        a = { obj, form: visual, weapon };
         actors.set(p.id, a);
         scene.add(obj);
       }
-      const local = p.id === id ? self : remotes.pose(p, renderedTime);
-      a.obj.position.set(local.x, 0, local.z);
-      a.obj.rotation.y = local.facing;
+      const local = !p.alive ? p : p.id === id ? self : remotes.pose(p, renderedTime);
+      a.obj.position.set(local.x, local.y ?? 0, local.z);
+      a.obj.rotation.y = local.hunter ? local.yaw : local.facing;
+      if (a.weapon) a.weapon.arm.rotation.x = local.pitch + 0.14 * kick(p.id);
+      if (!p.alive) {
+        a.found ??= new FoundEffect(a.obj, models[p.form]?.size[1] ?? 1.72);
+        a.found.update(serverNow - (p.foundAt ?? 0));
+      } else if (a.found) {
+        a.found.dispose();
+        a.found = undefined;
+      }
       a.obj.visible =
         !(follow.hunter && follow.id === p.id) &&
         !(
-          p.id === id &&
+          p.id === id && p.alive &&
           !p.hunter &&
           camera.position.distanceTo(new T.Vector3(self.x, eye(self), self.z)) <
             0.45
         );
     }
+    effects.update(now);
     renderer.render(scene, camera);
   }
   frame();
   return {
+    jump,
     update,
+    shot,
     joystick: (x: number, y: number, now: number) => {
       sample(now);
       touchX = x;

@@ -1,3 +1,4 @@
+import { defaultHideSettings } from "../shared/hide/settings.js";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { LocalMotion, RemoteMotion } from "../src/hide/motion.js";
@@ -13,7 +14,7 @@ function player(): Player {
 }
 
 function snapshot(p: Player, now: number): Snapshot {
-  return { players: [{ ...p }], now, ack: 0, phase: "hunt", host: "", remaining: 1,
+  return { settings: defaultHideSettings, players: [{ ...p }], now, ack: 0, phase: "hunt", host: "", remaining: 1,
     until: 500000, winner: "" };
 }
 
