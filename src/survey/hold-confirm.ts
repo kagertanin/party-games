@@ -15,7 +15,10 @@ function isHoldKey(key: string): key is HoldKey {
   return key === " " || key === "Enter";
 }
 
-export function mountHoldConfirm(root: HTMLElement, confirm: (proposalId: number) => void): () => void {
+export function mountHoldConfirm(
+  root: HTMLElement,
+  confirm: (proposalId: number, input: "pointer" | "keyboard") => void,
+): () => void {
   const documentView = root.ownerDocument.defaultView;
   if (!documentView) return () => {};
   const view = documentView;
@@ -57,7 +60,7 @@ export function mountHoldConfirm(root: HTMLElement, confirm: (proposalId: number
     const progress = (now - hold.startedAt) / HOLD_MS;
     if (progress >= 1) {
       reset();
-      confirm(hold.proposalId);
+      confirm(hold.proposalId, "pointerId" in hold.input ? "pointer" : "keyboard");
       return;
     }
 

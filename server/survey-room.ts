@@ -25,9 +25,11 @@ import {
 import { questionPacks, QuestionDeck } from "../src/survey/question-packs.js";
 import { SurveyGame, SURVEY_TEAM_NAMES, TurnReadiness, type Question, type TurnResult } from "../src/survey/survey.js";
 import { getTurnTiming, READINESS_MS } from "../src/survey/turn-timing.js";
+import { isSurveyMetricAction, SurveyMetrics } from "./survey-metrics.js";
 
 const activeCodes = new Set<string>();
 const RECONNECT_SECONDS = 90;
+const METRICS_THROTTLE_MS = 250;
 const KICKED_MESSAGE = "Ведущий исключил вас из комнаты.";
 const packPreviews: SurveyPackPreview[] = SURVEY_PACK_IDS.map((id) => {
   const { name, questions, questionCategories, scoring } = questionPacks[id];
@@ -86,6 +88,10 @@ export class SurveyRoom extends Room {
   private readonly members = new Map<string, SurveyMember>();
   private readonly reconnections = new Map<string, ReturnType<Room["allowReconnection"]>>();
   private readonly questionDecks = new Map<SurveyPackId, QuestionDeck>();
+  private readonly metrics = new SurveyMetrics();
+  private readonly metricsLastRejected = new Map<string, number>();
+  private readonly metricsLastResultView = new Map<string, number>();
+  private metricsMatchNumber = 0;
   private questionPack: SurveyPackId = "classic";
   private owner = "";
   private phaseId = 0;
@@ -111,10 +117,12 @@ export class SurveyRoom extends Room {
     void this.setPrivate();
     this.onMessage("sync", (client) => this.sendView(client, Date.now()));
     this.onMessage("action", (client, payload: unknown) => this.onAction(client, payload));
+    this.onMessage("results-interaction", (client, payload: unknown) => this.onResultsInteraction(client, payload));
     this.setSimulationInterval(() => {
       const now = Date.now();
       if (this.advance(now)) this.sendAll(now);
     }, 100);
+    this.metrics.record("room_created", this.metricsContext(Date.now()));
   }
 
   onAuth(_client: Client, options: { name?: unknown }) {
@@ -130,6 +138,7 @@ export class SurveyRoom extends Room {
     }
     this.members.set(client.sessionId, { id: client.sessionId, name, connected: true });
     this.updateOwner();
+    this.metrics.record("player_joined", this.metricsContext(Date.now(), client.sessionId));
     this.sendAll(Date.now());
   }
 
@@ -138,6 +147,10 @@ export class SurveyRoom extends Room {
     if (!member) return;
     member.connected = false;
     this.updateOwner();
+    this.metrics.record("player_left", {
+      ...this.metricsContext(Date.now(), member.id),
+      outcome: consented ? "leave" : "disconnect",
+    });
     if (!consented) {
       this.sendAll(Date.now());
       const reservation = this.allowReconnection(client, "manual");
@@ -149,6 +162,7 @@ export class SurveyRoom extends Room {
         if (this.members.has(member.id)) {
           member.connected = true;
           this.updateOwner();
+          this.metrics.record("player_reconnected", this.metricsContext(Date.now(), member.id));
           this.sendAll(Date.now());
         }
         return;
@@ -170,19 +184,107 @@ export class SurveyRoom extends Room {
   }
 
   onDispose() {
+    this.metrics.record("room_disposed", this.metricsContext(Date.now()));
     activeCodes.delete(this.roomId);
   }
 
   private onAction(client: Client, payload: unknown) {
     const now = Date.now();
     if (this.advance(now)) this.sendAll(now);
+    const actor = client.sessionId;
+    const data = payload && typeof payload === "object" ? payload as Record<string, unknown> : undefined;
+    const action = data?.type;
+    const targetTeamAction = action === "take-seat" || action === "move-player" || action === "resize-team" ||
+      action === "remove-team" || action === "award-answer";
+    const choice = typeof data?.id === "number" ? data.id : undefined;
+    const previousProposalCount = action === "propose" ? this.match?.game.proposals.length : undefined;
+    const context = isSurveyMetricAction(action) ? this.metricsContext(now, actor) : undefined;
+    const details = context && {
+      ...context,
+      action,
+      questionId: action === "question" ? choice : context.questionId,
+      optionId: action === "vote" || action === "confirm" ? choice : undefined,
+      answerIndex: action === "award-answer" && typeof data?.answerIndex === "number" ? data.answerIndex : undefined,
+      targetTeam: targetTeamAction && typeof data?.team === "number" ? data.team : undefined,
+      seat: (action === "take-seat" || action === "move-player") && typeof data?.seat === "number"
+        ? data.seat
+        : undefined,
+      input: action === "confirm" ? data?.input : undefined,
+      pack: action === "select-pack" ? data?.packId : context.pack,
+    };
     try {
-      this.applyAction(client.sessionId, payload, now);
-      this.advance(now);
-      this.sendAll(now);
+      this.applyAction(actor, payload, now);
     } catch (error) {
+      if (details && this.members.has(actor) && this.shouldRecord(this.metricsLastRejected, actor, now)) {
+        this.metrics.record("action", { ...details, accepted: false });
+      }
       client.send("rejected", error instanceof Error ? error.message : "Действие не удалось.");
+      return;
     }
+    if (details) {
+      const game = this.match?.game;
+      const proposed = previousProposalCount === undefined ? undefined : game?.proposals[previousProposalCount];
+      this.metrics.record("action", {
+        ...details,
+        match: action === "start" ? this.metricsMatchNumber : details.match,
+        optionId: proposed?.id ?? details.optionId,
+        points: details.answerIndex === undefined ? undefined : game?.question.answers[details.answerIndex]?.points,
+        accepted: true,
+      });
+    }
+    this.advance(now);
+    this.sendAll(now);
+  }
+
+  private onResultsInteraction(client: Client, payload: unknown) {
+    const actor = client.sessionId;
+    const match = this.match;
+    if (match?.stage.phase !== "results" || !this.members.get(actor)?.connected ||
+        !payload || typeof payload !== "object") return;
+    const { kind, team, title } = payload as Record<string, unknown>;
+    const validTeam = (kind === "open-team" || kind === "close-team") &&
+      typeof team === "number" && Number.isInteger(team) && !!match.game.teams[team];
+    const validTitle = (kind === "open-title" || kind === "close-title") &&
+      (title === "ideas" || title === "bullseye" || title === "confirmations");
+    if (!validTeam && !validTitle) return;
+    const now = Date.now();
+    if (!this.shouldRecord(this.metricsLastResultView, actor, now)) return;
+    this.metrics.record("result_view", {
+      ...this.metricsContext(now, actor),
+      action: kind,
+      targetTeam: validTeam ? team : undefined,
+      title: validTitle ? title : undefined,
+    });
+  }
+
+  private shouldRecord(lastEventAt: Map<string, number>, actor: string, now: number) {
+    if (now - (lastEventAt.get(actor) ?? -Infinity) < METRICS_THROTTLE_MS) return false;
+    lastEventAt.set(actor, now);
+    return true;
+  }
+
+  private metricsContext(now: number, player?: string) {
+    const match = this.match;
+    const phase = match?.stage.phase ?? ("lobby" as const);
+    const team = player === undefined
+      ? match && (match.stage.phase === "resolution" ? match.stage.result.team : match.game.activeTeam)
+      : match
+        ? match.roster.findIndex((roster) => roster.some(({ id }) => id === player))
+        : this.teams.find(({ seats }) => seats.some((member) => member?.id === player))?.fruitIndex;
+    return {
+      at: now,
+      player,
+      match: match ? this.metricsMatchNumber : undefined,
+      phase,
+      phaseId: this.phaseId,
+      team: team !== undefined && team >= 0 ? team : undefined,
+      pack: this.questionPack,
+      round: match ? match.game.questionIndex + 1 : undefined,
+      turn: match && (match.stage.phase === "resolution" ? match.stage.turnIndex : match.game.turnIndex) + 1,
+      questionId: match && phase !== "ballot" ? match.game.questionId : undefined,
+      remainingMs: match?.stage.deadline ? Math.max(0, match.stage.deadline - now) : undefined,
+      connectedPlayers: [...this.members.values()].filter(({ connected }) => connected).length,
+    };
   }
 
   private applyAction(actor: string, payload: unknown, now: number) {
@@ -216,10 +318,10 @@ export class SurveyRoom extends Room {
     } else if (action.type === "vote" && stage.phase === "turn") {
       game.vote(this.requireActivePlayer(match, actor), action.id);
     } else if (action.type === "confirm" && stage.phase === "turn") {
-      this.requireActivePlayer(match, actor);
+      const confirmedBy = this.requireActivePlayer(match, actor);
       const candidate = game.confirmationCandidate(stage.clockVisible);
       if (!candidate || candidate.id !== action.id) throw new Error("Этот ответ пока нельзя подтвердить.");
-      this.finishTurn(match, now, candidate.id);
+      this.finishTurn(match, now, candidate.id, confirmedBy);
     } else if (action.type === "award-answer" && stage.phase === "reveal") {
       this.requireOwner(actor);
       game.awardAnswer(action.answerIndex, action.team);
@@ -228,7 +330,7 @@ export class SurveyRoom extends Room {
       game.nextQuestion();
       this.setStage(match, game.phase === "results"
         ? { phase: "results", deadline: 0 }
-        : this.questionStage(match.deck, match.roster.flat().length, now));
+        : this.questionStage(match.deck, match.roster.flat().length, now), now, "manual");
     } else if (action.type === "replay" && stage.phase === "results") {
       this.requireOwner(actor);
       this.match = undefined;
@@ -238,6 +340,7 @@ export class SurveyRoom extends Room {
       }
       this.retired.clear();
       this.updateOwner();
+      this.metrics.record("phase_changed", { ...this.metricsContext(now), initiator: "manual" });
     } else {
       throw new Error("Это действие сейчас недоступно.");
     }
@@ -304,7 +407,9 @@ export class SurveyRoom extends Room {
       this.questionDecks.set(this.questionPack, deck);
     }
     this.match = { game, roster, questions, deck, stage: this.questionStage(deck, playerCount, now) };
+    this.metricsMatchNumber++;
     this.phaseId++;
+    this.metrics.record("phase_changed", { ...this.metricsContext(now), initiator: "manual" });
   }
 
   private requireTeam(index: number) {
@@ -340,10 +445,16 @@ export class SurveyRoom extends Room {
   private removeMember(member: SurveyMember) {
     this.releaseSeat(member);
     this.members.delete(member.id);
+    this.metricsLastRejected.delete(member.id);
+    this.metricsLastResultView.delete(member.id);
   }
 
   private kickPlayer(member: SurveyMember) {
     if (member.id === this.owner) throw new Error("Ведущий может выйти из комнаты сам.");
+    this.metrics.record("player_left", {
+      ...this.metricsContext(Date.now(), member.id),
+      outcome: "leave",
+    });
     this.removeMember(member);
     this.reconnections.get(member.id)?.reject(new Error(KICKED_MESSAGE));
     const target = this.clients.getById(member.id);
@@ -406,7 +517,7 @@ export class SurveyRoom extends Room {
       const selected = stage.ballot.finish(now);
       if (selected === undefined) return false;
       game.selectQuestion(selected);
-      this.prepareTurn(match, now);
+      this.prepareTurn(match, now, now >= stage.deadline ? "timer" : "complete");
       return true;
     }
     if (stage.phase === "ready" && stage.readiness.shouldStart(now)) {
@@ -415,12 +526,12 @@ export class SurveyRoom extends Room {
         phase: "turn",
         deadline: now + durationMs,
         clockVisible: showClockAtMs === 0,
-      });
+      }, now, now >= stage.deadline ? "timer" : "complete");
       return true;
     }
     if (stage.phase === "resolution" && now >= stage.deadline) {
-      if (game.phase === "reveal") this.setStage(match, { phase: "reveal", deadline: 0 });
-      else this.prepareTurn(match, now);
+      if (game.phase === "reveal") this.setStage(match, { phase: "reveal", deadline: 0 }, now, "timer");
+      else this.prepareTurn(match, now, "timer");
       return true;
     }
     if (stage.phase === "turn") {
@@ -445,30 +556,41 @@ export class SurveyRoom extends Room {
     };
   }
 
-  private prepareTurn(match: Match, now: number) {
+  private prepareTurn(match: Match, now: number, initiator: "complete" | "timer") {
     this.setStage(match, {
       phase: "ready",
       deadline: now + READINESS_MS,
       readiness: new TurnReadiness(match.roster[match.game.activeTeam].length, now),
-    });
+    }, now, initiator);
   }
 
-  private finishTurn(match: Match, now: number, proposalId?: number) {
+  private finishTurn(match: Match, now: number, proposalId?: number, confirmedBy?: number) {
     const { game } = match;
     // Scoring advances the game immediately. Keep the completed turn visible until its animation ends.
     const turnIndex = game.turnIndex;
-    game.finishTurn(proposalId);
+    const context = this.metricsContext(now);
+    const initiator = confirmedBy === undefined ? "timer" : "manual";
+    game.finishTurn(proposalId, confirmedBy);
+    const result = game.lastAnswer!;
+    this.metrics.record("turn_resolved", {
+      ...context,
+      initiator,
+      outcome: result.kind,
+      answerIndex: result.answerIndex,
+      points: result.points,
+    });
     this.setStage(match, {
       phase: "resolution",
       deadline: now + SURVEY_RESOLUTION_MS,
-      result: game.lastAnswer!,
+      result,
       turnIndex,
-    });
+    }, now, initiator);
   }
 
-  private setStage(match: Match, stage: Stage) {
+  private setStage(match: Match, stage: Stage, now: number, initiator: "manual" | "complete" | "timer") {
     match.stage = stage;
     this.phaseId++;
+    this.metrics.record("phase_changed", { ...this.metricsContext(now), initiator });
   }
 
   private updateOwner() {
@@ -556,6 +678,7 @@ export class SurveyRoom extends Room {
         : null,
       resolution,
       turnHistory: [...game.turnHistory],
+      ...(stage.phase === "results" ? { resultsStats: game.resultsStats } : {}),
     };
   }
 }

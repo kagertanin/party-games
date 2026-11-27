@@ -3,7 +3,7 @@ import "./online-lobby.css";
 import type { Client, Room } from "colyseus.js";
 import {
   SURVEY_CODE, SURVEY_KICKED_CODE, SURVEY_ROOM, SURVEY_TEAM_COUNTS, SURVEY_MIN_TEAM_SIZE, SURVEY_MAX_TEAM_SIZE,
-  canStartSurvey, type SurveyMember, type SurveyOnlineAction, type SurveyPackId, type SurveyRoomView,
+  canStartSurvey, type SurveyMember, type SurveyOnlineAction, type SurveyPackId, type SurveyResultsInteraction, type SurveyRoomView,
 } from "../../shared/survey-online";
 import { renderFruit } from "./fruit-icons";
 
@@ -382,6 +382,12 @@ export function createSurveyLobby(app: HTMLElement, onUpdate: () => void) {
     if (previousError) redrawRoom();
   }
 
+  function inspectResults(interaction: SurveyResultsInteraction) {
+    if (view?.match?.phase === "results" && room?.connection.isOpen && !pending) {
+      room.send("results-interaction", interaction);
+    }
+  }
+
   function redrawRoom(focusAction?: string, memberId?: string) {
     if (packDialog && !availableQuestionPacks()?.length) closePackDialog(false);
     const focused = document.activeElement;
@@ -614,7 +620,7 @@ ${roomFooter(startMessage, isHost, Boolean(canStart && room && !pending), Boolea
   });
 
   return {
-    open, restore, send, leave, lobbyMarkup, connectionMarkup,
+    open, restore, send, inspectResults, leave, lobbyMarkup, connectionMarkup,
     get view() { return view; },
     get connected() { return room !== null && !pending; },
     get error() { return error; },

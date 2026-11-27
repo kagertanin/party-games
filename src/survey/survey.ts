@@ -1,4 +1,5 @@
 import { READINESS_MS } from "./turn-timing";
+import { SurveyStats, type SurveyMatchStats } from "./match-stats";
 
 export type Question = {
   prompt: string;
@@ -101,7 +102,9 @@ export class SurveyGame {
   phase: "turn" | "reveal" | "results" = "turn";
   private readonly completedTurns: TurnResult[] = [];
   private readonly currentProposals: Proposal[] = [];
+  private readonly proposalAuthors: number[] = [];
   private readonly submitted = new Set<number>();
+  private readonly stats: SurveyStats;
   private manualCandidate: { key: string; proposal: Proposal | undefined } | undefined;
   private chosenQuestionId: number | undefined;
 
@@ -140,6 +143,7 @@ export class SurveyGame {
       const players = members ? [...members] : Array.from({ length: size }, () => `Игрок ${nextPlayer++}`);
       return { name, players, score: 0 };
     });
+    this.stats = new SurveyStats(this.teams);
   }
 
   get question(): Question {
@@ -179,6 +183,14 @@ export class SurveyGame {
     return this.completedTurns.at(-1) ?? null;
   }
 
+  get resultsStats(): SurveyMatchStats {
+    return this.stats.snapshot();
+  }
+
+  private get statsQuestion() {
+    return { questionIndex: this.questionIndex, prompt: this.question.prompt };
+  }
+
   hasProposed(player: number): boolean {
     return this.submitted.has(player);
   }
@@ -193,6 +205,8 @@ export class SurveyGame {
     }
     if (!this.currentProposals.some(({ text }) => normalizeAnswer(text) === key)) {
       this.currentProposals.push({ id: this.currentProposals.length, text: proposal });
+      this.proposalAuthors.push(player);
+      this.stats.proposal(this.activeTeam, player, this.statsQuestion, proposal);
     }
     this.submitted.add(player);
   }
@@ -216,12 +230,18 @@ export class SurveyGame {
     return this.manualCandidate.proposal;
   }
 
-  finishTurn(confirmedProposalId?: number): void {
+  finishTurn(confirmedProposalId?: number, confirmedBy?: number): void {
     if (this.phase !== "turn") return;
+    if (confirmedBy !== undefined) {
+      this.requireCurrentPlayer(confirmedBy);
+      if (confirmedProposalId === undefined) throw new Error("Выберите одну из предложенных версий.");
+    }
     const proposal = confirmedProposalId === undefined
       ? this.pickProposal(this.leadingProposals())
       : this.requireCurrentProposal(confirmedProposalId);
-    this.completedTurns.push(this.scoreTurn(proposal));
+    const result = this.scoreTurn(proposal);
+    this.completedTurns.push(result);
+    this.stats.turn(this.statsQuestion, result, proposal && this.proposalAuthors[proposal.id], confirmedBy);
     this.resetBallot();
     if (this.opened.size === this.question.answers.length ||
         this.turnIndex + 1 === this.teams.length * MAX_ROUNDS) {
@@ -238,7 +258,8 @@ export class SurveyGame {
       throw new Error("Такого ответа нет на табло.");
     }
     if (this.opened.has(answerIndex)) throw new Error("Этот ответ уже засчитан.");
-    this.addAnswerPoints(answerIndex, team);
+    const points = this.addAnswerPoints(answerIndex, team);
+    this.stats.award(team, this.statsQuestion, this.question.answers[answerIndex].label, points);
   }
 
   nextQuestion(): void {
@@ -305,6 +326,7 @@ export class SurveyGame {
 
   private resetBallot(): void {
     this.currentProposals.length = 0;
+    this.proposalAuthors.length = 0;
     this.votes.clear();
     this.submitted.clear();
     this.manualCandidate = undefined;

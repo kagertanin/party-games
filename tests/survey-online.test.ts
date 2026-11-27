@@ -175,6 +175,7 @@ test("survey rooms share a private lobby and authoritative play across clients",
   assert.equal(resolution.turnIndex, 0);
   assert.equal(resolution.activeTeam, 0);
   assert.equal(resolution.deadline - scored.serverNow, SURVEY_RESOLUTION_MS);
+  assert.equal(resolution.resultsStats, undefined);
   assert.deepEqual(resolution.resolution, {
     team: 0, text: label, points, kind: "hit", answerIndex: 0,
   });
@@ -240,6 +241,7 @@ test("the chosen question pack supplies fresh ballots, with misses and host awar
     assert.equal(view.questionPack, "adult");
     assert.equal(view.questionPacks, undefined);
     assert.equal(match.question, null);
+    assert.equal(match.resultsStats, undefined);
     assert.equal(choices.length, 3);
     const guest = await viewWhen(oranges[0], (state) => state.match?.phaseId === match.phaseId);
     assert.deepEqual(guest.match?.ballot?.choices, choices);
@@ -265,7 +267,8 @@ test("the chosen question pack supplies fresh ballots, with misses and host awar
     await viewWhen(host, (view) => view.match?.proposals[0]?.text === text);
     for (const player of team) send(player, { type: "vote", phaseId: turn.phaseId, id: 0 });
     await viewWhen(team[0], (view) => view.match?.confirmationId === 0 && view.match.votes.length === team.length);
-    send(team[0], { type: "confirm", phaseId: turn.phaseId, id: 0 });
+    const confirmer = questionIndex === 0 && turnIndex === 0 ? team[1] : team[0];
+    send(confirmer, { type: "confirm", phaseId: turn.phaseId, id: 0 });
     return viewWhen(host, (view) =>
       view.match?.phase === "resolution" && view.match.turnIndex === turnIndex);
   }
@@ -314,6 +317,7 @@ test("the chosen question pack supplies fresh ballots, with misses and host awar
   assert.deepEqual(awarded.teams.map(({ score }) => score), expectedScores);
   assert.ok(awarded.match?.opened.some(([answer, team]) => answer === 0 && team === 0));
   assert.deepEqual(awarded.match?.turnHistory, match.turnHistory);
+  assert.equal(awarded.match?.resultsStats, undefined);
   send(host, { ...credit, team: 1 });
   await expectRejected(host);
   send(host, { ...credit, answerIndex: 1 });
@@ -337,6 +341,18 @@ test("the chosen question pack supplies fresh ballots, with misses and host awar
   assert.equal(seen.size, 9);
   const finished = await viewWhen(host, ({ match }) => match?.phase === "results");
   assert.deepEqual(finished.teams.map(({ score }) => score), expectedScores);
+  const recapStats = finished.match?.resultsStats;
+  assert.ok(recapStats);
+  assert.deepEqual(recapStats.teams.map(({ answers }) => answers.reduce((sum, { points }) => sum + points, 0)), expectedScores);
+  assert.deepEqual(recapStats.teams[0].answers.find(({ kind }) => kind === "awarded"), {
+    questionIndex: 0, prompt: first.prompt, text: unclaimed.label, points: unclaimed.points, kind: "awarded",
+  });
+  assert.deepEqual(recapStats.teams[1].answers.map(({ questionIndex }) => questionIndex), [0, 0, 1, 1, 2, 2]);
+  assert.equal(recapStats.titles.some(({ id }) => id === "ideas"), false);
+  assert.equal(recapStats.titles.find(({ id }) => id === "confirmations")?.name, "Маша");
+  assert.equal(recapStats.titles.find(({ id }) => id === "confirmations")?.value, 6);
+  const guestResults = await viewWhen(oranges[1], ({ match }) => match?.phase === "results");
+  assert.deepEqual(guestResults.match?.resultsStats, recapStats);
   send(host, { type: "replay", phaseId: finished.match!.phaseId });
   const restartedLobby = await viewWhen(host, ({ match }) => match === null);
   assert.equal(restartedLobby.questionPack, "adult");
