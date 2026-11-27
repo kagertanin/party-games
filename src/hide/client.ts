@@ -251,14 +251,24 @@ export function mount(app: HTMLElement) {
   pad.onlostpointercapture = () => scene?.joystick(0, 0);
   root.querySelector<HTMLButtonElement>(".action")!.onclick = () =>
     scene?.action();
+  window.addEventListener("pagehide", () => room?.connection.close());
+  async function resume(token: string) {
+    panel.innerHTML = "<h1>Возвращаемся в комнату…</h1>";
+    const deadline = Date.now() + 60000;
+    // A proxy may report the old socket closed after the replacement tab loads.
+    do {
+      try {
+        const resumed = await client.reconnect(token);
+        await attach(resumed);
+        return;
+      } catch {
+        await new Promise(resolve => setTimeout(resolve, 1200));
+      }
+    } while (Date.now() < deadline);
+    sessionStorage.removeItem(key);
+    form("Время возврата истекло. Войдите в комнату снова.");
+  }
   const token = sessionStorage.getItem(key);
-  if (code && token?.startsWith(code + ":"))
-    client
-      .reconnect(token)
-      .then(attach)
-      .catch(() => {
-        sessionStorage.removeItem(key);
-        form("Войдите в комнату снова.");
-      });
+  if (code && token?.startsWith(code + ":")) void resume(token);
   else form();
 }
