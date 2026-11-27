@@ -231,6 +231,16 @@ export class SurveyGame {
     }
   }
 
+  awardAnswer(answerIndex: number, team: number): void {
+    if (this.phase !== "reveal") throw new Error("Засчитать ответ можно после завершения вопроса.");
+    if (!Number.isInteger(team) || !this.teams[team]) throw new Error("Выберите команду.");
+    if (!Number.isInteger(answerIndex) || !this.question.answers[answerIndex]) {
+      throw new Error("Такого ответа нет на табло.");
+    }
+    if (this.opened.has(answerIndex)) throw new Error("Этот ответ уже засчитан.");
+    this.addAnswerPoints(answerIndex, team);
+  }
+
   nextQuestion(): void {
     if (this.phase !== "reveal") return;
     if (this.questionIndex + 1 === this.questionLimit) {
@@ -270,10 +280,15 @@ export class SurveyGame {
     if (answerIndex === -1) return { team, text, points: 0, kind: "miss" };
     if (this.opened.has(answerIndex)) return { team, text, points: 0, kind: "repeat" };
 
+    const points = this.addAnswerPoints(answerIndex, team);
+    return { team, text, points, kind: "hit", answerIndex };
+  }
+
+  private addAnswerPoints(answerIndex: number, team: number): number {
     const { points } = this.question.answers[answerIndex];
     this.opened.set(answerIndex, team);
     this.teams[team].score += points;
-    return { team, text, points, kind: "hit", answerIndex };
+    return points;
   }
 
   private leadingProposals(): Proposal[] {

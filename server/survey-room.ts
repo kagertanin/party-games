@@ -5,6 +5,7 @@ import {
   SURVEY_KICKED_CODE,
   SURVEY_MAX_TEAM_SIZE,
   SURVEY_MIN_TEAM_SIZE,
+  SURVEY_RESOLUTION_MS,
   SURVEY_TEAM_COUNTS,
   SURVEY_TEAM_SIZES,
   canStartSurvey,
@@ -19,7 +20,7 @@ import {
   QUESTIONS_PER_MATCH,
 } from "../src/survey/question-ballot.js";
 import { questions } from "../src/survey/questions.js";
-import { SurveyGame, SURVEY_TEAM_NAMES, TurnReadiness } from "../src/survey/survey.js";
+import { SurveyGame, SURVEY_TEAM_NAMES, TurnReadiness, type TurnResult } from "../src/survey/survey.js";
 import { getTurnTiming, READINESS_MS } from "../src/survey/turn-timing.js";
 
 const activeCodes = new Set<string>();
@@ -30,6 +31,7 @@ type Stage =
   | { phase: "ballot"; deadline: number; ballot: QuestionBallot }
   | { phase: "ready"; deadline: number; readiness: TurnReadiness }
   | { phase: "turn"; deadline: number; clockVisible: boolean }
+  | { phase: "resolution"; deadline: number; result: TurnResult; turnIndex: number }
   | { phase: "reveal" | "results"; deadline: 0 };
 
 type LobbyTeam = { fruitIndex: number; seats: (SurveyMember | null)[] };
@@ -197,6 +199,9 @@ export class SurveyRoom extends Room {
       const candidate = game.confirmationCandidate(stage.clockVisible);
       if (!candidate || candidate.id !== action.id) throw new Error("Этот ответ пока нельзя подтвердить.");
       this.finishTurn(match, now, candidate.id);
+    } else if (action.type === "award-answer" && stage.phase === "reveal") {
+      this.requireOwner(actor);
+      game.awardAnswer(action.answerIndex, action.team);
     } else if (action.type === "next" && stage.phase === "reveal") {
       this.requireOwner(actor);
       game.nextQuestion();
@@ -384,6 +389,11 @@ export class SurveyRoom extends Room {
       });
       return true;
     }
+    if (stage.phase === "resolution" && now >= stage.deadline) {
+      if (game.phase === "reveal") this.setStage(match, { phase: "reveal", deadline: 0 });
+      else this.prepareTurn(match, now);
+      return true;
+    }
     if (stage.phase === "turn") {
       if (now >= stage.deadline) {
         this.finishTurn(match, now);
@@ -416,12 +426,16 @@ export class SurveyRoom extends Room {
   }
 
   private finishTurn(match: Match, now: number, proposalId?: number) {
-    match.game.finishTurn(proposalId);
-    if (match.game.phase === "reveal") {
-      this.setStage(match, { phase: "reveal", deadline: 0 });
-    } else {
-      this.prepareTurn(match, now);
-    }
+    const { game } = match;
+    // Scoring advances the game immediately. Keep the completed turn visible until its animation ends.
+    const turnIndex = game.turnIndex;
+    game.finishTurn(proposalId);
+    this.setStage(match, {
+      phase: "resolution",
+      deadline: now + SURVEY_RESOLUTION_MS,
+      result: game.lastAnswer!,
+      turnIndex,
+    });
   }
 
   private setStage(match: Match, stage: Stage) {
@@ -474,7 +488,9 @@ export class SurveyRoom extends Room {
   }
 
   private matchView({ game, stage, roster }: Match, actor: string): SurveyMatchView {
-    const stagePlayer = roster[game.activeTeam].findIndex(({ id }) => id === actor);
+    const resolution = stage.phase === "resolution" ? stage.result : null;
+    const activeTeam = resolution?.team ?? game.activeTeam;
+    const stagePlayer = roster[activeTeam].findIndex(({ id }) => id === actor);
     const ballotPlayer = roster.flat().findIndex(({ id }) => id === actor);
     const showAllAnswers = stage.phase === "reveal" || stage.phase === "results";
     return {
@@ -483,8 +499,8 @@ export class SurveyRoom extends Room {
       deadline: stage.deadline,
       questionIndex: game.questionIndex,
       questionLimit: game.questionLimit,
-      turnIndex: game.turnIndex,
-      activeTeam: game.activeTeam,
+      turnIndex: stage.phase === "resolution" ? stage.turnIndex : game.turnIndex,
+      activeTeam,
       question: stage.phase === "ballot" ? null : {
         prompt: game.question.prompt,
         answers: game.question.answers.map(({ label, points }, index) =>
@@ -508,6 +524,7 @@ export class SurveyRoom extends Room {
       confirmationId: stage.phase === "turn" && stagePlayer >= 0
         ? game.confirmationCandidate(stage.clockVisible)?.id ?? null
         : null,
+      resolution,
       turnHistory: [...game.turnHistory],
     };
   }

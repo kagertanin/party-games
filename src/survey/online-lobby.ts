@@ -403,6 +403,16 @@ export function createSurveyLobby(app: HTMLElement, onUpdate: () => void) {
           <p class="survey-muted" data-room-notice role="status">${escape(notice)}</p>
         </div>
       </header>
+      ${isHost && hasSeatSelection ? `<div class="survey-online-team-tools">
+        <button class="survey-button secondary-action survey-online-shuffle" type="button"
+          data-room-action="shuffle-teams" aria-label="Распределить случайно" ${canManage ? "" : "disabled"}>
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M3 6h2c6 0 8 12 14 12h2m-4-4 4 4-4 4M3 18h2c6 0 8-12 14-12h2m-4-4 4 4-4 4"/>
+          </svg>
+          <span class="survey-online-shuffle-hint" aria-hidden="true">Распределить случайно</span>
+        </button>
+      </div>` : ""}
       <div class="survey-online-teams">
         ${roster.map(({ name, players, capacity, fruit, seats: teamSeats }) => `<section class="survey-online-team survey-team-${fruit}" aria-label="${escape(name)}">
           <h2>${renderFruit(fruit)}${escape(name)}</h2>
@@ -430,8 +440,6 @@ export function createSurveyLobby(app: HTMLElement, onUpdate: () => void) {
         <p class="survey-muted">${startMessage}</p>
         <div class="survey-dialog-actions">
           ${room || pending ? '<button class="survey-button secondary-action" type="button" data-room-action="leave">Выйти из комнаты</button>' : ""}
-          ${isHost && hasSeatSelection ? `<button class="survey-button secondary-action" type="button"
-            data-room-action="shuffle-teams" ${canManage ? "" : "disabled"}>Распределить случайно</button>` : ""}
           ${isHost ? `<button class="survey-button primary-action" type="button" data-room-action="start" ${canStart && room && !pending ? "" : "disabled"}>Начать игру</button>` : ""}
         </div>
       </footer>

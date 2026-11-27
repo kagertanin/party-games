@@ -1,64 +1,67 @@
 import type { TurnResult } from "./survey";
 
-const DURATION_MULTIPLIER = 3;
-const RESULT_READING_MS = 430 * DURATION_MULTIPLIER;
-const PASS_READING_MS = 900;
-
 type TurnAnimationElements = {
   root: HTMLElement;
   source: DOMRect | null;
   tile: HTMLElement | null;
   score: HTMLElement | null;
-  verdict: HTMLElement | null;
+  checkpoint: Element | null;
+  fruit: number;
   reveal: () => void;
   award: () => void;
+  markTurn: () => void;
 };
 
 type Point = { x: number; y: number };
 
-function delay(milliseconds: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+function delay(milliseconds: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) return Promise.resolve();
+  return new Promise((resolve) => {
+    const timer = setTimeout(finish, milliseconds);
+    function finish() {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", finish);
+      resolve();
+    }
+    signal?.addEventListener("abort", finish, { once: true });
+  });
 }
 
-function visibleCenter(rect: DOMRect | null | undefined, view: Window): Point | null {
-  if (!rect) return null;
-  const left = Math.max(0, rect.left);
-  const top = Math.max(0, rect.top);
-  const right = Math.min(view.innerWidth, rect.right);
-  const bottom = Math.min(view.innerHeight, rect.bottom);
-  if (right <= left || bottom <= top) return null;
-  return { x: (left + right) / 2, y: (top + bottom) / 2 };
+function center(rect: DOMRect | null | undefined, view: Window): Point | null {
+  if (!rect || !rect.width || !rect.height) return null;
+  return {
+    x: Math.max(12, Math.min(view.innerWidth - 12, (rect.left + rect.right) / 2)),
+    y: Math.max(12, Math.min(view.innerHeight - 12, (rect.top + rect.bottom) / 2)),
+  };
 }
 
 async function play(
-  element: HTMLElement,
-  keyframes: Keyframe[],
-  baseDuration: number,
-  easing: string,
+  element: HTMLElement, keyframes: Keyframe[], duration: number, easing: string, signal?: AbortSignal,
 ) {
-  const duration = baseDuration * DURATION_MULTIPLIER;
+  if (signal?.aborted || !element.isConnected || typeof element.animate !== "function") return;
   const animation = element.animate(keyframes, { duration, easing, fill: "both" });
   let timeout: ReturnType<typeof setTimeout> | undefined;
+  const stop = () => animation.cancel();
+  signal?.addEventListener("abort", stop, { once: true });
   try {
     await Promise.race([
       animation.finished,
-      new Promise<void>((resolve) => { timeout = setTimeout(resolve, duration + 150); }),
+      new Promise<void>((resolve) => { timeout = setTimeout(resolve, duration + 50); }),
     ]);
+  } catch {
+    // A cancelled animation must not interrupt the result reveal.
   } finally {
     clearTimeout(timeout);
-    animation.cancel();
+    signal?.removeEventListener("abort", stop);
+    stop();
   }
 }
 
 async function fly(
-  root: HTMLElement,
-  kind: "answer" | "points",
-  text: string,
-  team: number,
-  from: Point,
-  to: Point,
-  duration: number,
+  root: HTMLElement, kind: "answer" | "points", text: string, team: number,
+  from: Point, to: Point, duration: number, signal?: AbortSignal,
 ) {
+  if (!duration || signal?.aborted) return;
   const item = root.ownerDocument.createElement("span");
   item.className = `survey-flying-${kind} survey-team-${team}`;
   item.setAttribute("aria-hidden", "true");
@@ -66,93 +69,97 @@ async function fly(
   item.style.left = `${from.x}px`;
   item.style.top = `${from.y}px`;
   root.append(item);
+  const destination = `translate(-50%, -50%) translate(${to.x - from.x}px, ${to.y - from.y}px) scale(.68)`;
   try {
     await play(item, [
-      { transform: "translate(-50%, -50%) scale(1)", opacity: 1 },
-      {
-        transform: `translate(-50%, -50%) translate(${to.x - from.x}px, ${to.y - from.y}px) scale(.68)`,
-        opacity: .2,
-      },
-    ], duration, "cubic-bezier(.22,.68,.26,1)");
+      { transform: "translate(-50%, -50%) scale(1)", opacity: .92 },
+      { transform: destination, opacity: .98, offset: .91 },
+      { transform: destination, opacity: 0 },
+    ], duration, "cubic-bezier(.36,.12,.25,1)", signal);
   } finally {
     item.remove();
   }
 }
 
-export async function animateTurnResult(result: TurnResult, elements: TurnAnimationElements): Promise<void> {
-  if (result.kind === "pass") return delay(PASS_READING_MS);
-
-  const { root, source, tile, score, verdict, reveal, award } = elements;
+export async function animateTurnResult(
+  result: TurnResult, elements: TurnAnimationElements, duration: number, signal?: AbortSignal,
+): Promise<void> {
+  const { root, source, tile, score, checkpoint, fruit, reveal, award, markTurn } = elements;
   const view = root.ownerDocument.defaultView;
-  const motion = view && !view.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-  const readingTime = delay(RESULT_READING_MS);
-  if (result.kind !== "hit") {
-    if (motion && verdict) {
-      await play(verdict, [
-        { transform: "translateX(0)" },
-        { transform: "translateX(-6px)", offset: .15 },
-        { transform: "translateX(6px)", offset: .3 },
-        { transform: "translateX(-3px)", offset: .45 },
-        { transform: "translateX(0)", offset: .6 },
-        { transform: "translateX(0)" },
-      ], 430, "ease-in-out").catch(() => undefined);
-    }
-    return readingTime;
+  const end = delay(duration, signal);
+  if (!view || view.matchMedia("(prefers-reduced-motion: reduce)").matches || duration < 240) {
+    reveal();
+    award();
+    markTurn();
+    return end;
   }
 
-  const destination = view && visibleCenter(tile?.getBoundingClientRect(), view);
-  if (view && motion && tile && destination) {
+  const panel = root.querySelector<HTMLElement>(".survey-resolution");
+  if (panel) void play(panel, [
+    { opacity: .35, transform: "translateY(5px)" },
+    { opacity: 1, transform: "translateY(0)" },
+  ], duration * .16, "ease-out", signal);
+
+  const answer = root.querySelector<HTMLElement>(".survey-resolved-answer");
+  const origin = center(source, view) ?? center(answer?.getBoundingClientRect(), view);
+  const destination = center((result.kind === "hit" ? tile : checkpoint)?.getBoundingClientRect(), view);
+  function flyAnswer(from: Point, to: Point, milliseconds: number) {
+    if (answer) answer.style.opacity = "0";
+    return fly(root, "answer", result.text, fruit, from, to, milliseconds, signal);
+  }
+  if (result.kind !== "hit") {
     try {
-      const resolved = root.querySelector(".survey-resolved-answer");
-      const origin = visibleCenter(source, view)
-        ?? visibleCenter(resolved?.getBoundingClientRect(), view)
-        ?? { x: destination.x, y: Math.min(view.innerHeight - 24, destination.y + 60) };
-      await fly(root, "answer", result.text, result.team, origin, destination, 460);
+      if (origin && destination && result.text) {
+        await delay(duration * .27, signal);
+        if (!signal?.aborted) await flyAnswer(origin, destination, duration * .51);
+      }
+    } finally {
+      if (!signal?.aborted) markTurn();
+    }
+    return end;
+  }
+
+  try {
+    if (origin && destination) await flyAnswer(origin, destination, duration * .33);
+    if (tile) {
       tile.classList.add("survey-flipping");
       await play(tile, [
         { transform: "perspective(760px) rotateY(0)" },
         { transform: "perspective(760px) rotateY(90deg)" },
-      ], 150, "ease-in");
-    } catch {
-      // Continue to reveal the answer even if a browser cancels the motion.
+      ], duration * .09, "ease-in", signal);
     }
-  }
-
-  try {
+    if (signal?.aborted) return;
     reveal();
-    if (view && motion && tile && destination) {
+    if (tile) {
       await play(tile, [
         { transform: "perspective(760px) rotateY(-90deg)" },
         { transform: "perspective(760px) rotateY(0)" },
-      ], 170, "ease-out");
+      ], duration * .1, "ease-out", signal);
       tile.classList.remove("survey-flipping");
-      const points = tile.querySelector(".survey-points");
-      const target = visibleCenter(score?.getBoundingClientRect(), view);
-      if (target) {
-        const origin = visibleCenter(points?.getBoundingClientRect(), view) ?? destination;
-        await fly(root, "points", `+${result.points}`, result.team, origin, target, 410);
-      }
     }
-  } catch {
-    // Skipping an animation must still commit the score.
+    if (signal?.aborted) return;
+    markTurn();
+    const points = center(tile?.querySelector(".survey-points")?.getBoundingClientRect(), view) ?? destination;
+    const target = center(score?.getBoundingClientRect(), view);
+    if (points && target) {
+      await fly(root, "points", `+${result.points}`, fruit, points, target, duration * .32, signal);
+    }
   } finally {
     tile?.classList.remove("survey-flipping");
-    award();
+    if (!signal?.aborted) award();
   }
 
-  if (motion && score && score.isConnected) {
+  if (score && !signal?.aborted) {
     score.classList.add("survey-score-pulse");
     try {
       await play(score, [
         { transform: "scale(1)" },
-        { transform: "scale(1.22)" },
+        { transform: "scale(1.18)" },
         { transform: "scale(1)" },
-      ], 240, "ease-out");
-    } catch {
-      // The score has already been awarded.
+      ], duration * .13, "ease-out", signal);
     } finally {
       score.classList.remove("survey-score-pulse");
     }
   }
-  await readingTime;
+  await end;
 }

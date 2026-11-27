@@ -4,7 +4,7 @@ import { setTimeout as wait } from "node:timers/promises";
 import { Client, type Room } from "colyseus.js";
 import { startServer } from "../server/index.js";
 import {
-  SURVEY_CODE, SURVEY_KICKED_CODE, SURVEY_ROOM,
+  SURVEY_CODE, SURVEY_KICKED_CODE, SURVEY_RESOLUTION_MS, SURVEY_ROOM,
   type SurveyOnlineAction, type SurveyRoomView,
 } from "../shared/survey-online.js";
 
@@ -43,8 +43,8 @@ async function openSurveyServer(t: TestContext) {
     return room;
   }
 
-  async function viewWhen(room: Room, predicate: (view: SurveyRoomView) => boolean) {
-    const until = Date.now() + 1_500;
+  async function viewWhen(room: Room, predicate: (view: SurveyRoomView) => boolean, timeout = 1_500) {
+    const until = Date.now() + timeout;
     do {
       const state = latest.get(room);
       if (state && predicate(state)) return state;
@@ -165,11 +165,25 @@ test("survey rooms share a private lobby and authoritative play across clients",
   }
   await viewWhen(host, (view) => view.match?.confirmationId === 0);
   host.send("action", { type: "confirm", phaseId: turn.phaseId, id: 0 });
-  const scored = await viewWhen(spectator, (view) => view.match?.turnIndex === 1);
+  const scored = await viewWhen(spectator, (view) => view.match?.phase === "resolution");
+  const resolution = scored.match!;
+  assert.equal(resolution.turnIndex, 0);
+  assert.equal(resolution.activeTeam, 0);
+  assert.equal(resolution.deadline - scored.serverNow, SURVEY_RESOLUTION_MS);
+  assert.deepEqual(resolution.resolution, {
+    team: 0, text: "Завтракают", points: 30, kind: "hit", answerIndex: 1,
+  });
   assert.equal(scored.teams[0].score, 30);
-  assert.deepEqual(scored.match?.question?.answers, [
+  assert.deepEqual(resolution.opened, [[1, 0]]);
+  assert.deepEqual(resolution.question?.answers, [
     null, { label: "Завтракают", points: 30 }, null, null, null, null,
   ]);
+  send(spectator, { type: "ready", phaseId: resolution.phaseId });
+  await expectRejected(spectator);
+  const handoff = await viewWhen(spectator, (view) =>
+    view.match?.phase === "ready" && view.match.turnIndex === 1, SURVEY_RESOLUTION_MS + 1_000);
+  assert.ok(handoff.serverNow >= resolution.deadline);
+  assert.equal(handoff.match?.activeTeam, 1);
 
   const token = teammate.reconnectionToken;
   teammate.connection.close();
@@ -179,6 +193,74 @@ test("survey rooms share a private lobby and authoritative play across clients",
   await viewWhen(host, (view) => view.teams[0].players[1].connected === true);
   const resumedView = await viewWhen(resumed, (view) => view.match?.turnIndex === 1);
   assert.equal(resumedView.teams[0].score, 30);
+});
+
+test("misses resolve before handoff and the host may credit a revealed answer once", { timeout: 15_000 }, async (t) => {
+  const { create, join, send, takeSeat, viewWhen, expectRejected } = await openSurveyServer(t);
+  const host = await create();
+  const apples = [host, await join(host, "Юля")];
+  const oranges = [await join(host, "Маша"), await join(host, "Саша")];
+  await Promise.all([...apples, ...oranges].map((player, index) => takeSeat(player, Math.floor(index / 2), index % 2)));
+  send(host, { type: "start" });
+  const ballot = (await viewWhen(host, (view) => view.match?.phase === "ballot")).match!;
+  for (const player of [...apples, ...oranges]) send(player, { type: "question", phaseId: ballot.phaseId, id: 2 });
+
+  const results = [
+    { text: "Жевачка", kind: "miss" },
+    { text: "Расчёска", kind: "hit" },
+    { text: "Листья", kind: "hit" },
+    { text: "Пыль", kind: "hit" },
+  ] as const;
+  for (const [turnIndex, { text, kind }] of results.entries()) {
+    const team = turnIndex % 2 === 0 ? apples : oranges;
+    const ready = (await viewWhen(host, (view) =>
+      view.match?.phase === "ready" && view.match.turnIndex === turnIndex, SURVEY_RESOLUTION_MS + 1_000)).match!;
+    for (const player of team) send(player, { type: "ready", phaseId: ready.phaseId });
+    const turn = (await viewWhen(host, (view) => view.match?.phase === "turn")).match!;
+    send(team[0], { type: "propose", phaseId: turn.phaseId, text });
+    await viewWhen(host, (view) => view.match?.proposals[0]?.text === text);
+    for (const player of team) send(player, { type: "vote", phaseId: turn.phaseId, id: 0 });
+    await viewWhen(team[0], (view) => view.match?.confirmationId === 0 && view.match.votes.length === team.length);
+    send(team[0], { type: "confirm", phaseId: turn.phaseId, id: 0 });
+    const resolved = await viewWhen(host, (view) =>
+      view.match?.phase === "resolution" && view.match.turnIndex === turnIndex);
+    assert.equal(resolved.match?.resolution?.kind, kind);
+    assert.equal(resolved.match?.question?.answers[0], null);
+    if (kind === "miss") {
+      assert.deepEqual(resolved.match?.resolution, { team: 0, text, points: 0, kind: "miss" });
+      assert.deepEqual(resolved.match?.question?.answers, Array(6).fill(null));
+      assert.deepEqual(resolved.teams.map(({ score }) => score), [0, 0]);
+      send(host, { type: "award-answer", phaseId: resolved.match!.phaseId, answerIndex: 0, team: 0 });
+      await expectRejected(host);
+    }
+  }
+
+  const revealed = await viewWhen(host, (view) => view.match?.phase === "reveal", SURVEY_RESOLUTION_MS + 1_000);
+  const match = revealed.match!;
+  const credit = { type: "award-answer", phaseId: match.phaseId, answerIndex: 0, team: 0 } as const;
+  assert.deepEqual(match.question?.answers[0], { label: "Жвачка", points: 23 });
+  assert.deepEqual(revealed.teams.map(({ score }) => score), [7, 31]);
+  await viewWhen(apples[1], (view) => view.match?.phase === "reveal" && view.match.phaseId === match.phaseId);
+  send(apples[1], credit);
+  await expectRejected(apples[1], /ведущему/);
+  send(host, { ...credit, team: 2 });
+  await expectRejected(host);
+  send(host, { ...credit, answerIndex: 6 });
+  await expectRejected(host);
+  send(host, credit);
+  const awarded = await viewWhen(oranges[0], (view) => view.match?.opened.some(([answer]) => answer === 0) === true);
+  assert.deepEqual(awarded.teams.map(({ score }) => score), [30, 31]);
+  assert.ok(awarded.match?.opened.some(([answer, team]) => answer === 0 && team === 0));
+  assert.deepEqual(awarded.match?.turnHistory, match.turnHistory);
+  send(host, { ...credit, team: 1 });
+  await expectRejected(host);
+  send(host, { ...credit, answerIndex: 1 });
+  await expectRejected(host);
+
+  send(host, { type: "next", phaseId: match.phaseId });
+  const next = await viewWhen(host, (view) => view.match?.phase === "ballot" && view.match.questionIndex === 1);
+  assert.deepEqual(next.teams.map(({ score }) => score), [30, 31]);
+  assert.deepEqual(next.match?.opened, []);
 });
 
 test("the host can rearrange teams and start a lobby with empty seats", { timeout: 10_000 }, async (t) => {

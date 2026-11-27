@@ -868,12 +868,6 @@ button.survey-member:hover { background: color-mix(in srgb, var(--survey-paper) 
   letter-spacing: -.03em;
 }
 
-.survey-board li:is(.found, .unclaimed) .survey-rank {
-  font: 650 .875rem/1.1 "Rubik Variable", sans-serif;
-  color: var(--survey-muted);
-  margin-bottom: .28rem;
-}
-
 .survey-answer {
   font-size: clamp(.875rem, 1.58vw, 1.55rem);
   font-weight: 750;

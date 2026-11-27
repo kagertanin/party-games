@@ -40,6 +40,7 @@ export function renderTurnSpiral(
   playedTurns: number,
   active: boolean,
   history: readonly TurnAnswer[] = [],
+  pendingTurn?: number,
 ): string {
   const teams = Array.from({ length: rounds }, () => teamOrder).flat();
   const lastTurn = teams.length - 1;
@@ -66,7 +67,7 @@ export function renderTurnSpiral(
     const [x, y] = point(turn);
     const current = active && turn === playedTurns;
     const state = turn < playedTurns ? " is-played" : current ? " is-current" : "";
-    return `<g class="survey-spiral-node survey-team-${team}${state}" transform="translate(${x} ${y})">
+    return `<g class="survey-spiral-node survey-team-${team}${state}" transform="translate(${x} ${y})" data-spiral-turn="${turn}">
       ${current ? '<circle class="survey-spiral-ring" r="9"/>' : ""}
       <g transform="translate(-8 -8)">${renderFruit(team, "survey-spiral-fruit")}</g>
     </g>`;
@@ -81,10 +82,12 @@ export function renderTurnSpiral(
     const text = escape(answer.text || "Пропуск");
     const outcome = outcomes[answer.kind];
     const caption = answer.text ? `${text}. ${outcome.label}` : outcome.label;
+    const visibility = turn === pendingTurn ? "visibility:hidden;" : "";
     return {
-      connector: `<path class="survey-spiral-connector" d="M${x} ${y} L${bend} ${slot.y} H${rail}" fill="none"/>`,
+      connector: `<path class="survey-spiral-connector" d="M${x} ${y} L${bend} ${slot.y} H${rail}" fill="none"
+        data-spiral-history="${turn}"${visibility ? ' style="visibility:hidden"' : ""}/>`,
       label: `<span class="survey-spiral-label is-${answer.kind}${right ? " is-right" : ""}"
-        style="--label-y:${slot.y / HEIGHT * 100}%;--label-width:${ANSWER_WIDTH / WIDTH * 100}%"
+        data-spiral-history="${turn}" style="${visibility}--label-y:${slot.y / HEIGHT * 100}%;--label-width:${ANSWER_WIDTH / WIDTH * 100}%"
         role="img" aria-label="${caption}" title="${caption}" data-answer="${caption}" tabindex="0">
         <span class="survey-spiral-result" aria-hidden="true">${outcome.mark}</span>
         <span class="survey-spiral-answer" aria-hidden="true">${text}</span>

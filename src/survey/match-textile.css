@@ -274,32 +274,62 @@
 }
 
 .survey-board li:is(.found, .unclaimed) {
-  grid-template-columns: minmax(0,1fr) auto;
-  align-content: center;
-  align-items: center;
-  gap: .24rem;
+  grid-template-columns: minmax(0, 1fr);
+  place-items: center;
 }
 
-.survey-board li:is(.found, .unclaimed) .survey-rank,
+.survey-revealed-content {
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  gap: .4rem;
+  width: 100%;
+  min-width: 0;
+}
+
+.survey-board li.is-awardable { padding: 0; }
+.survey-award-card {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  min-height: inherit;
+  min-width: 0;
+  padding: .55rem;
+  border-radius: inherit;
+  background: transparent;
+  cursor: grab;
+}
+.survey-award-card:hover { background: #fff7db86; }
+.survey-award-card:active { cursor: grabbing; }
+.is-dragging-award [data-award-team] { outline: 2px dashed var(--team); outline-offset: 2px; }
+.is-dragging-award .is-award-target { outline-style: solid; outline-offset: 3px; }
+
+.survey-app.survey-award-dialog {
+  display: block;
+  min-height: 0;
+  background: var(--fabric-weave) 0 0 / 72px repeat, var(--fabric-cream);
+}
+.survey-award-dialog form { overflow-wrap: anywhere; }
+.survey-award-dialog label[hidden] { display: none; }
+
 .survey-board li:is(.found, .unclaimed) .survey-points {
-  grid-row: 1;
-  min-width: 1.55em;
+  min-width: 2em;
   margin: 0;
-  padding: .05em .23em;
-  border: 1px solid currentColor;
-  border-radius: .28em .36em .29em .33em;
-  color: var(--fabric-ink);
-  font: italic 680 clamp(.84rem, 1.3vw, 1.25rem)/1.2 var(--survey-display);
+  padding: .1em .48em;
+  border-radius: .45em .6em .44em .57em;
+  background: var(--team-ink, #635580);
+  color: #fffaf1;
+  font: italic 730 clamp(.84rem, 1.3vw, 1.25rem)/1.2 var(--survey-display);
   text-align: center;
 }
 
-.survey-board li:is(.found, .unclaimed) .survey-rank { grid-column: 1; justify-self: start; }
-.survey-board li:is(.found, .unclaimed) .survey-points { grid-column: 2; justify-self: end; }
-
 .survey-board .survey-answer {
-  grid-area: 2 / 1 / auto / -1;
+  min-width: 0;
   font-size: clamp(1rem, 1.57vw, 1.6rem);
   line-height: 1.08;
+  overflow-wrap: anywhere;
+  text-wrap: balance;
 }
 
 .survey-panel .survey-ready,
@@ -411,6 +441,7 @@
   .survey-question h1, .survey-question-ballot h1 { font-size: clamp(1.55rem, 5.3vw, 2.4rem); }
   .survey-spiral-layout.has-history { max-width: 16rem; }
   .survey-board li, .survey-board li.found, .survey-board li.unclaimed { padding: .42rem; }
+  .survey-board li.is-awardable { padding: 0; }
   .survey-board .survey-answer { font-size: clamp(.78rem, 2.65vw, 1.12rem); }
   .survey-rank { font-size: clamp(2.2rem, 7.5vw, 3.8rem); }
 }

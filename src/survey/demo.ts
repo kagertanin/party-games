@@ -9,11 +9,12 @@ import { renderFruit } from "./fruit-icons";
 import { animateTurnResult } from "./turn-animation";
 import { getReadinessClockAtMs, getTurnTiming, READINESS_MS } from "./turn-timing";
 import { mountHoldConfirm } from "./hold-confirm";
+import { mountAnswerAward } from "./answer-award";
 import { QuestionBallot, QUESTION_BALLOT_CLOCK_MS, QUESTIONS_PER_MATCH } from "./question-ballot";
 import { animateQuestionChoice } from "./question-transition";
 import { createSurveyLobby } from "./online-lobby";
 import { displayOnlineMatch, type SurveyDisplay } from "./online-match";
-import type { SurveyMatchView, SurveyRoomView } from "../../shared/survey-online";
+import { SURVEY_RESOLUTION_MS, type SurveyMatchView, type SurveyRoomView } from "../../shared/survey-online";
 
 const DEMO_PLAYER_COUNT = 12;
 
@@ -44,6 +45,7 @@ export function mountSurveyDemo(app: HTMLElement) {
   let proposalError = "";
   let readiness: TurnReadiness | null = null;
   let resolving: TurnResult | null = null;
+  let onlineAnimation: AbortController | null = null;
   let liveDeadline = 0;
   let lastOnlineView: SurveyRoomView | null = null;
   let livePhaseId: number | undefined;
@@ -71,6 +73,30 @@ export function mountSurveyDemo(app: HTMLElement) {
   const readyPlayer = (index: number) => liveMatch()?.ready.includes(index) ?? readiness?.isReady(index) ?? false;
   const waitingForTeam = () => liveMatch() ? liveMatch()?.phase === "ready" : readiness !== null;
   const canAdvance = () => !lobby.view || (lobby.connected && lobby.view.you === lobby.view.owner);
+  function awardContext(answerIndex: number) {
+    const room = lobby.view;
+    const online = room?.match;
+    const match = room && online ? displayOnlineMatch(room, online) : game;
+    if (!match || match.phase !== "reveal" || resolving || !canAdvance() || match.opened.has(answerIndex)) return;
+    const answer = match.question.answers[answerIndex];
+    if (!answer) return;
+    return {
+      key: room && online ? `${room.code}:${online.phaseId}` : `demo:${match.questionIndex}`,
+      label: answer.label,
+      points: answer.points,
+      teams: match.teams,
+    };
+  }
+  const syncAnswerAward = mountAnswerAward(app, awardContext, (answerIndex, team) => {
+    const online = liveMatch();
+    if (online) {
+      lobby.send({ type: "award-answer", phaseId: online.phaseId, answerIndex, team });
+    } else if (game) {
+      game.awardAnswer(answerIndex, team);
+      render();
+      focusNext();
+    }
+  });
   const cancelHold = mountHoldConfirm(app, (id) => {
     const match = liveMatch();
     if (match) {
@@ -89,15 +115,16 @@ export function mountSurveyDemo(app: HTMLElement) {
   });
 
   function teamSidebar(match: SurveyDisplay) {
-    const hasTurn = match.phase === "turn" && !isBallot() && !changingQuestion;
+    const result = resolving ?? liveMatch()?.resolution;
+    const hasTurn = match.phase === "turn" && !isBallot() && !changingQuestion && !result;
     const playing = hasTurn && (liveMatch() ? liveMatch()?.phase === "turn" : deadline !== 0);
-    const activeTeam = resolving?.team ?? (hasTurn ? match.activeTeam : -1);
-    const ownTeam = viewingTeam ?? (resolving?.team ?? match.lastAnswer?.team ?? match.activeTeam);
+    const activeTeam = result?.team ?? (hasTurn ? match.activeTeam : -1);
+    const ownTeam = viewingTeam ?? (result?.team ?? match.lastAnswer?.team ?? match.activeTeam);
     const perspectiveTeam = viewingTeam === null && hasTurn ? match.activeTeam : ownTeam;
     const teamOrder = match.teams.map((_, turn) => fruitOf(match.teamForTurn(turn)));
     const playedTurns = match.turnHistory.length;
     const totalTurns = match.teams.length * MAX_ROUNDS;
-    const progressLabel = resolving ? "Результат хода." : hasTurn
+    const progressLabel = result ? "Результат хода." : hasTurn
       ? `Круг ${Math.floor(match.turnIndex / match.teams.length) + 1} из ${MAX_ROUNDS}. ${playing ? "Отвечают" : "Готовятся"} — ${match.teams[activeTeam].name}.`
       : "Вопрос завершён.";
     const displayedScore = (index: number) =>
@@ -110,7 +137,7 @@ export function mountSurveyDemo(app: HTMLElement) {
           const current = teamIndex === activeTeam;
           const interactive = !liveMatch() && own && current && (playing || waitingForTeam());
           const score = displayedScore(teamIndex);
-          return `<section class="survey-team-section survey-team-${fruitOf(teamIndex)}${own ? " is-own" : ""}${current ? " is-current" : ""}${open ? " is-expanded" : ""}">
+          return `<section data-award-team="${teamIndex}" class="survey-team-section survey-team-${fruitOf(teamIndex)}${own ? " is-own" : ""}${current ? " is-current" : ""}${open ? " is-expanded" : ""}">
             <button class="survey-team-toggle" data-expand-team="${teamIndex}" aria-expanded="${open}" aria-controls="survey-roster-${teamIndex}">
               <span>${own ? '<span class="survey-team-label">Моя команда</span>' : ""}
                 <span class="survey-team-name">${renderFruit(fruitOf(teamIndex))}<span>${escape(team.name)}</span></span>
@@ -134,7 +161,7 @@ export function mountSurveyDemo(app: HTMLElement) {
         }).join("")}
       </div>
       ${!isBallot() && !changingQuestion ? `<div class="survey-turn-progress" role="group" aria-label="${progressLabel} Сыграно ${playedTurns} из ${totalTurns} возможных ходов.">
-        ${renderTurnSpiral(teamOrder, MAX_ROUNDS, playedTurns, hasTurn && !resolving, match.turnHistory)}
+        ${renderTurnSpiral(teamOrder, MAX_ROUNDS, playedTurns, hasTurn, match.turnHistory, resolving ? playedTurns - 1 : undefined)}
       </div>` : ""}
     </aside>`;
   }
@@ -197,9 +224,10 @@ export function mountSurveyDemo(app: HTMLElement) {
   function revealedTile(match: SurveyDisplay, index: number, team: number | undefined) {
     const answer = match.question.answers[index];
     if (!answer) return "";
-    return `<span class="survey-rank">${index + 1}</span>
+    return `<span class="survey-revealed-content">
       <span class="survey-answer">${escape(answer.label)}</span>
-      <span class="survey-points" aria-label="${team === undefined ? "Не начислено" : "Очки"}: ${answer.points}">${answer.points}</span>`;
+      <span class="survey-points" aria-label="${team === undefined ? "Не начислено" : "Очки"}: ${answer.points}">${answer.points}</span>
+    </span>`;
   }
 
   function board(match: SurveyDisplay) {
@@ -207,27 +235,38 @@ export function mountSurveyDemo(app: HTMLElement) {
     return `<section class="survey-board" aria-label="Табло ответов">
       <ol>${match.question.answers.map((_, index) => {
         const team = match.opened.get(index);
-        return (team !== undefined || revealed) && resolving?.answerIndex !== index
-          ? `<li data-answer-index="${index}" class="${team === undefined ? "unclaimed" : `found survey-team-${fruitOf(team)}`}">${revealedTile(match, index, team)}</li>`
-          : `<li data-answer-index="${index}" class="hidden-answer" aria-label="Ответ ${index + 1} скрыт"><span class="survey-rank">${index + 1}</span></li>`;
+        if ((team === undefined && !revealed) || resolving?.answerIndex === index) {
+          return `<li data-answer-index="${index}" class="hidden-answer" aria-label="Ответ ${index + 1} скрыт"><span class="survey-rank">${index + 1}</span></li>`;
+        }
+        const content = revealedTile(match, index, team);
+        if (team !== undefined) {
+          return `<li data-answer-index="${index}" class="found survey-team-${fruitOf(team)}">${content}</li>`;
+        }
+        return `<li data-answer-index="${index}" class="unclaimed${canAdvance() ? " is-awardable" : ""}">
+          ${canAdvance() ? `<button type="button" class="survey-award-card" draggable="true" data-award-card="${index}"
+            aria-label="Засчитать ответ «${escape(match.question.answers[index]!.label)}»">${content}</button>` : content}
+        </li>`;
       }).join("")}</ol>
     </section>`;
   }
 
   function turnPanel(match: SurveyDisplay) {
-    if (resolving) {
-      const verdict = {hit: "Верно!", miss: "Мимо!", repeat: "Уже открыто", pass: "Ход пропущен"}[resolving.kind];
+    const result = resolving ?? liveMatch()?.resolution;
+    if (result) {
+      const verdict = {hit: "Верно!", miss: "Мимо!", repeat: "Уже открыто", pass: "Ход пропущен"}[result.kind];
       return `<section class="survey-panel" aria-label="Результат хода">
-        <div class="survey-resolution survey-team-${resolving.team}" role="status">
-          <p class="survey-verdict ${resolving.kind}">${verdict}</p>
-          ${resolving.text ? `<strong class="survey-resolved-answer">${escape(resolving.text)}</strong>` : ""}
+        <div class="survey-resolution survey-team-${fruitOf(result.team)}" role="status">
+          <p class="survey-verdict ${result.kind}">${verdict}</p>
+          ${result.text ? `<strong class="survey-resolved-answer">${escape(result.text)}</strong>` : ""}
         </div>
       </section>`;
     }
     if (match.phase === "reveal") {
       return `<section class="survey-panel survey-recap">
         <h2>Вопрос завершён</h2>
-        <p>${match.opened.size === match.question.answers.length ? "Все шесть ответов угаданы." : "Два круга закончились. Открыли оставшиеся строки, очки за них никому не начислены."}</p>
+        <p>${match.opened.size === match.question.answers.length ? "Все ответы засчитаны."
+          : canAdvance() ? "Перетащите незачтённый ответ на команду или нажмите на карточку."
+          : "Незачтённые ответы открыты."}</p>
         ${canAdvance() ? `<button class="survey-button primary-action" data-survey="next-question">${match.questionIndex + 1 === match.questionLimit ? "Показать итоги" : "Выбрать следующий вопрос"}</button>` : '<p class="survey-muted">Ждём ведущего.</p>'}
       </section>`;
     }
@@ -358,6 +397,7 @@ export function mountSurveyDemo(app: HTMLElement) {
 
   function render() {
     cancelHold();
+    syncAnswerAward();
     const room = lobby.view;
     const live = room?.match;
     const match = room && live ? displayOnlineMatch(room, live) : game;
@@ -390,6 +430,7 @@ export function mountSurveyDemo(app: HTMLElement) {
     const room = lobby.view;
     const match = room?.match;
     if (!room || !match) {
+      cancelOnlineAnimation();
       livePhaseId = undefined;
       lastOnlineView = null;
       render();
@@ -397,6 +438,7 @@ export function mountSurveyDemo(app: HTMLElement) {
     }
 
     const changedPhase = livePhaseId !== match.phaseId;
+    const previous = lastOnlineView?.code === room.code ? lastOnlineView.match : null;
     livePhaseId = match.phaseId;
     if (lastOnlineView !== room) {
       liveDeadline = match.deadline ? performance.now() + match.deadline - room.serverNow : 0;
@@ -404,14 +446,36 @@ export function mountSurveyDemo(app: HTMLElement) {
     }
     viewingTeam = room.teams.findIndex((team) => team.players.some((member) => member.id === room.you));
     player = room.teams[viewingTeam]?.players.findIndex((member) => member.id === room.you) ?? -1;
+    if (match.phase === "resolution" && !changedPhase) return;
     if (changedPhase) {
+      cancelOnlineAnimation();
       draft = "";
       expandedTeam = viewingTeam;
     } else if (match.submitted) {
       draft = "";
     }
     updateOnlineClockState(match, room.teamCount);
+
+    const result = match.resolution;
+    const duration = Math.min(timeLeft(), SURVEY_RESOLUTION_MS);
+    if (match.phase === "resolution" && result && previous?.phase === "turn" &&
+        previous.questionIndex === match.questionIndex && previous.turnIndex === match.turnIndex &&
+        lobby.connected && !document.hidden && duration >= 240) {
+      const source = proposalPosition(previous.proposals, result);
+      resolving = result;
+      onlineAnimation = new AbortController();
+      renderOnlineUpdate();
+      void playResolution(displayOnlineMatch(room, match), result, source, duration, onlineAnimation.signal);
+      return;
+    }
     renderOnlineUpdate(changedPhase);
+  }
+
+  function cancelOnlineAnimation() {
+    if (!onlineAnimation) return;
+    onlineAnimation.abort();
+    onlineAnimation = null;
+    resolving = null;
   }
 
   function renderOnlineUpdate(changedPhase = false) {
@@ -419,7 +483,8 @@ export function mountSurveyDemo(app: HTMLElement) {
     const input = focused instanceof HTMLInputElement && focused.name === "answer" ? focused : null;
     const selection = input ? [input.selectionStart, input.selectionEnd] as const : null;
     const activeButton = focused instanceof HTMLButtonElement ? focused : null;
-    const focusAttribute = ["data-question-id", "data-expand-team", "data-vote", "data-confirm-proposal"].find((attribute) => activeButton?.hasAttribute(attribute));
+    const focusAttribute = ["data-question-id", "data-expand-team", "data-vote", "data-confirm-proposal", "data-award-card"]
+      .find((attribute) => activeButton?.hasAttribute(attribute));
     render();
     if (changedPhase) {
       const next = app.querySelector<HTMLElement>("#survey-ballot-title, #survey-propose input, .survey-ready-copy h2, .survey-panel h2");
@@ -429,7 +494,11 @@ export function mountSurveyDemo(app: HTMLElement) {
       next?.focus({ preventScroll: true });
       if (next && selection[0] !== null && selection[1] !== null) next.setSelectionRange(selection[0], selection[1]);
     } else if (focusAttribute && activeButton) {
-      app.querySelector<HTMLElement>(`[${focusAttribute}="${activeButton.getAttribute(focusAttribute)}"]`)?.focus({ preventScroll: true });
+      const same = app.querySelector<HTMLElement>(`[${focusAttribute}="${activeButton.getAttribute(focusAttribute)}"]`);
+      const next = same ?? (focusAttribute === "data-award-card"
+        ? app.querySelector<HTMLElement>('[data-survey="next-question"]')
+        : null);
+      next?.focus({ preventScroll: true });
     }
   }
 
@@ -512,34 +581,11 @@ export function mountSurveyDemo(app: HTMLElement) {
     match.finishTurn(confirmedProposalId);
     deadline = 0;
     const result = match.lastAnswer!;
-    const choice = proposals.find(({text}) => text === result.text);
-    const source = choice ? app.querySelector(`[data-proposal-id="${choice.id}"]`)?.getBoundingClientRect() ?? null : null;
+    const source = proposalPosition(proposals, result);
     resolving = result;
     render();
-    const tile = result.answerIndex === undefined ? null
-      : app.querySelector<HTMLElement>(`[data-answer-index="${result.answerIndex}"]`);
-    const score = app.querySelector<HTMLElement>(`[data-score-team="${result.team}"]`);
     try {
-      await animateTurnResult(result, {
-        root: app,
-        source,
-        tile,
-        score,
-        verdict: app.querySelector<HTMLElement>(".survey-verdict"),
-        reveal: () => {
-          if (!tile || result.answerIndex === undefined) return;
-          tile.classList.remove("hidden-answer");
-          tile.classList.add("found", `survey-team-${result.team}`);
-          tile.removeAttribute("aria-label");
-          tile.innerHTML = revealedTile(match, result.answerIndex, result.team);
-        },
-        award: () => {
-          if (!score) return;
-          const total = match.teams[result.team].score;
-          score.textContent = String(total);
-          score.setAttribute("aria-label", `Очки команды: ${total}`);
-        },
-      });
+      await playResolution(match, result, source);
     } finally {
       resolving = null;
       if (match.phase === "turn") prepareTurn();
@@ -548,6 +594,43 @@ export function mountSurveyDemo(app: HTMLElement) {
         focusNext();
       }
     }
+  }
+
+  function proposalPosition(proposals: SurveyDisplay["proposals"], result: TurnResult) {
+    const choice = proposals.find(({ text }) => text === result.text);
+    return choice ? app.querySelector(`[data-proposal-id="${choice.id}"]`)?.getBoundingClientRect() ?? null : null;
+  }
+
+  function playResolution(match: SurveyDisplay, result: TurnResult, source: DOMRect | null,
+    duration = SURVEY_RESOLUTION_MS, signal?: AbortSignal,
+  ) {
+    const tile = result.answerIndex === undefined ? null
+      : app.querySelector<HTMLElement>(`[data-answer-index="${result.answerIndex}"]`);
+    const score = app.querySelector<HTMLElement>(`[data-score-team="${result.team}"]`);
+    const turn = match.turnHistory.length - 1;
+    return animateTurnResult(result, {
+      root: app,
+      source,
+      tile,
+      score,
+      checkpoint: app.querySelector(`[data-spiral-turn="${turn}"]`),
+      fruit: fruitOf(result.team),
+      reveal: () => {
+        if (!tile || result.answerIndex === undefined) return;
+        tile.classList.remove("hidden-answer");
+        tile.classList.add("found", `survey-team-${fruitOf(result.team)}`);
+        tile.removeAttribute("aria-label");
+        tile.innerHTML = revealedTile(match, result.answerIndex, result.team);
+      },
+      award: () => {
+        if (!score) return;
+        const total = match.teams[result.team].score;
+        score.textContent = String(total);
+        score.setAttribute("aria-label", `Очки команды: ${total}`);
+      },
+      markTurn: () => app.querySelectorAll<HTMLElement | SVGElement>(`[data-spiral-history="${turn}"]`)
+        .forEach((element) => { element.style.visibility = ""; }),
+    }, duration, signal);
   }
 
   function focusNext() {
@@ -559,6 +642,7 @@ export function mountSurveyDemo(app: HTMLElement) {
     const room = lobby.view;
     const live = room?.match;
     if (room && live) {
+      if (live.phase === "resolution") return;
       if (updateOnlineClockState(live, room.teamCount)) {
         renderOnlineUpdate();
       } else if (live.phase === "ballot" && liveClockVisible) {
@@ -724,6 +808,7 @@ export function mountSurveyDemo(app: HTMLElement) {
     const action = button.dataset.survey;
     const live = liveMatch();
     if (live) {
+      if (live.phase === "resolution") return;
       const phaseId = live.phaseId;
       if (button.dataset.expandTeam !== undefined) {
         const team = Number(button.dataset.expandTeam);
