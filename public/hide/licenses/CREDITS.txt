@@ -1,0 +1,6 @@
+Brightline Offices (ph_office), original map by mg-prop-hunt.
+https://github.com/zees-games/mg-prop-hunt-maps
+Office model catalogue and rebuilt prop models from Zee's Prop Hunt.
+https://github.com/zees-games/mg-prop-hunt
+Original Furniture, Nature, Survival and Food kits by Kenney (CC0).
+The adjacent license files contain the original notices.

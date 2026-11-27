@@ -1,3 +1,4 @@
+import { HideRoom } from "./hide-room.js";
 import { createHash, randomBytes } from "node:crypto";
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
@@ -199,6 +200,7 @@ export async function startServer(port = Number(process.env.PORT || 2567)) {
   const server = new Server({
     transport: new WebSocketTransport({ server: http, maxPayload: 16_384 }),
   });
+  server.define("hide", HideRoom);
   server.define("hat", HatRoom);
   server.define(SURVEY_ROOM, SurveyRoom);
   await server.listen(port, "0.0.0.0");

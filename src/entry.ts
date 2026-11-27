@@ -3,7 +3,10 @@ const app = document.querySelector<HTMLDivElement>("#app")!;
 async function loadGame() {
   try {
     const params = new URLSearchParams(location.search);
-    if (params.get("game") === "survey") {
+    if (params.get("game") === "hide") {
+      document.title = "Прятки · Party Games";
+      (await import("./hide/client")).mount(app);
+    } else if (params.get("game") === "survey") {
       document.title = "Сто к одному · Party Games";
       const { mountSurveyDemo } = await import("./survey-entry");
       mountSurveyDemo(app);
