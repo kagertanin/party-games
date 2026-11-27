@@ -1,5 +1,6 @@
 import type { SurveyMatchView, SurveyRoomView } from "../../shared/survey-online";
 import type { SurveyGame } from "./survey";
+import type { SurveyMatchStats } from "./match-stats";
 
 export type SurveyDisplay = Pick<SurveyGame,
   "teams" | "phase" | "questionIndex" | "questionLimit" | "turnIndex" | "activeTeam" |
@@ -7,6 +8,7 @@ export type SurveyDisplay = Pick<SurveyGame,
   "hasProposed" | "confirmationCandidate"
 > & {
   question: { prompt: string; answers: readonly ({ label: string; points: number } | null)[] };
+  readonly resultsStats?: SurveyMatchStats;
 };
 
 export function displayOnlineMatch(room: SurveyRoomView, match: SurveyMatchView): SurveyDisplay {
@@ -26,5 +28,6 @@ export function displayOnlineMatch(room: SurveyRoomView, match: SurveyMatchView)
     proposals: match.proposals,
     hasProposed: () => match.submitted,
     confirmationCandidate: () => match.proposals.find(({ id }) => id === match.confirmationId),
+    resultsStats: match.resultsStats,
   };
 }

@@ -11,6 +11,22 @@ import {
   type Phase,
   type Snapshot,
 } from "../shared/hide/world.js";
+import { MAX_BATCH_STEPS, STEP_SECONDS } from "../shared/hide/movement.js";
+
+interface InputStream {
+  ack: number;
+  received: number;
+  queue: Input[];
+  credit: number;
+}
+function inputStream(): InputStream {
+  return { ack: 0, received: 0, queue: [], credit: 0 };
+}
+function readInput(v: Input | undefined): Input | undefined {
+  if (!v || ![v.forward, v.side, v.yaw, v.pitch].every(Number.isFinite)) return;
+  return { forward: clamp(v.forward, -1, 1), side: clamp(v.side, -1, 1),
+    yaw: v.yaw % (2 * Math.PI), pitch: clamp(v.pitch, -1.48, 1.48) };
+}
 const idle = (): Input => ({ forward: 0, side: 0, yaw: 0, pitch: 0 });
 const clamp = (n: number, min: number, max: number) =>
   Math.max(min, Math.min(max, n));
@@ -18,6 +34,7 @@ export class HideRoom extends Room {
   maxClients = 12;
   private players = new Map<string, Player>();
   private inputs = new Map<string, Input>();
+  private streams = new Map<string, InputStream>();
   private shotAt = new Map<string, number>();
   private reload = new Map<string, number>();
   private history: { at: number; players: Player[] }[] = [];
@@ -62,6 +79,7 @@ export class HideRoom extends Room {
           ammo: 6,
         });
         this.inputs.set(p.id, { ...idle(), yaw: p.yaw });
+        this.streams.set(p.id, inputStream());
       }
       this.history = [];
       this.reload.clear();
@@ -87,24 +105,32 @@ export class HideRoom extends Room {
     });
     this.onMessage("input", (c, v) => {
       const p = this.players.get(c.sessionId);
-      if (
-        !p ||
-        !this.active(p) ||
-        !v ||
-        ![v.forward, v.side, v.yaw, v.pitch].every(Number.isFinite)
-      )
-        return;
-      this.inputs.set(p.id, {
-        forward: clamp(v.forward, -1, 1),
-        side: clamp(v.side, -1, 1),
-        yaw: v.yaw % (2 * Math.PI),
-        pitch: clamp(v.pitch, -1.48, 1.48),
-      });
+      const input = readInput(v);
+      if (!p || !this.active(p) || !input || this.streams.get(p.id)?.received) return;
+      this.inputs.set(p.id, input);
+    });
+    this.onMessage("move", (c, batch) => {
+      const p = this.players.get(c.sessionId);
+      if (!p || !this.active(p) || !Array.isArray(batch?.inputs) ||
+          !batch.inputs.length || batch.inputs.length > MAX_BATCH_STEPS) return;
+      const stream = this.streams.get(p.id)!;
+      if (batch.first !== stream.received + 1) return;
+      const inputs: Input[] = [];
+      for (const raw of batch.inputs) {
+        const input = readInput(raw);
+        if (!input) return;
+        inputs.push(input);
+      }
+      stream.received += inputs.length;
+      stream.queue.push(...inputs);
+      // Discard stale motion following a long WebSocket stall. The next ack
+      // retires the skipped samples too; an old key press cannot run for seconds.
+      if (stream.queue.length > 18) stream.queue.splice(0, stream.queue.length - 18);
     });
     this.onMessage("use", (c, v) => {
       const p = this.players.get(c.sessionId);
       if (!p || !this.active(p)) return;
-      const input = this.inputs.get(p.id)!;
+      const input = readInput(v?.aim) ?? this.inputs.get(p.id)!;
       p.yaw = input.yaw;
       p.pitch = input.pitch;
       if (p.hunter) {
@@ -168,6 +194,7 @@ export class HideRoom extends Room {
       ammo: 6,
     });
     this.inputs.set(id, idle());
+    this.streams.set(id, inputStream());
     if (!this.host) this.host = id;
     this.publish();
   }
@@ -175,6 +202,10 @@ export class HideRoom extends Room {
     const p = this.players.get(c.sessionId);
     if (!p) return;
     p.online = false;
+    const stream = this.streams.get(p.id)!;
+    stream.queue.length = 0;
+    stream.ack = stream.received;
+    stream.credit = 0;
     this.inputs.set(p.id, { ...idle(), yaw: p.yaw, pitch: p.pitch });
     this.publish();
     if (!consented)
@@ -186,6 +217,7 @@ export class HideRoom extends Room {
       } catch {}
     this.players.delete(p.id);
     this.inputs.delete(p.id);
+    this.streams.delete(p.id);
     if (this.host === p.id)
       this.host =
         [...this.players.values()].find((o) => o.online)?.id ??
@@ -222,7 +254,23 @@ export class HideRoom extends Room {
       } else this.finish("Прячущиеся");
     }
     for (const p of this.players.values()) {
-      if (this.active(p)) walk(p, this.inputs.get(p.id)!, dt);
+      if (this.active(p)) {
+        const stream = this.streams.get(p.id)!;
+        // Budget steps from elapsed SERVER time. Jitter may spend a small
+        // accumulated budget, but sending more packets cannot increase speed.
+        stream.credit = Math.min(12, stream.credit + dt / STEP_SECONDS);
+        if (stream.received) {
+          const count = Math.min(stream.queue.length, Math.floor(stream.credit + 1e-8));
+          for (const input of stream.queue.splice(0, count)) {
+            walk(p, input, STEP_SECONDS);
+            this.inputs.set(p.id, input);
+          }
+          stream.credit = Math.max(0, stream.credit - count);
+          stream.ack = stream.received - stream.queue.length;
+        } else {
+          walk(p, this.inputs.get(p.id)!, dt);
+        }
+      }
       if (p.ammo < 6 && now >= (this.reload.get(p.id) ?? Infinity)) {
         p.ammo++;
         this.reload.set(p.id, now + 5000);
@@ -240,6 +288,7 @@ export class HideRoom extends Room {
     const concealed =
       this.phase === "hide" && this.players.get(c.sessionId)?.hunter;
     const view: Snapshot = {
+      ack: this.streams.get(c.sessionId)?.ack ?? 0,
       phase: this.phase,
       host: this.host,
       until: this.until,

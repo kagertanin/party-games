@@ -10,13 +10,15 @@ import { animateTurnResult } from "./turn-animation";
 import { getReadinessClockAtMs, getTurnTiming, READINESS_MS } from "./turn-timing";
 import { mountHoldConfirm } from "./hold-confirm";
 import { mountAnswerAward } from "./answer-award";
-import { QuestionBallot, QUESTION_BALLOT_CLOCK_MS, QUESTIONS_PER_MATCH } from "./question-ballot";
+import { QuestionBallot, QUESTION_BALLOT_CLOCK_MS, QUESTION_BALLOT_MS, QUESTIONS_PER_MATCH } from "./question-ballot";
 import { animateQuestionChoice } from "./question-transition";
 import { createSurveyLobby } from "./online-lobby";
 import { displayOnlineMatch, type SurveyDisplay } from "./online-match";
+import { mountSurveyResults, renderSurveyResults } from "./results";
 import { SURVEY_RESOLUTION_MS, type SurveyMatchView, type SurveyRoomView } from "../../shared/survey-online";
 
 const DEMO_PLAYER_COUNT = 12;
+const DEMO_MISSES = ["Послать гонца", "Проверить, не подменили ли кота", "Починить бубен"];
 
 const escape = (text: string) =>
   text.replace(/[&<>"']/g, (char) => ({
@@ -54,6 +56,7 @@ export function mountSurveyDemo(app: HTMLElement) {
   let liveClockVisible = false;
   let liveVotingOnly = false;
   const lobby = createSurveyLobby(app, updateOnline);
+  const resultsUi = mountSurveyResults(app, lobby.inspectResults);
   document.title = "Сто к одному · Party Games";
   document.querySelector('meta[name="theme-color"]')?.setAttribute("content", "#ede7fb");
 
@@ -99,11 +102,11 @@ export function mountSurveyDemo(app: HTMLElement) {
       focusNext();
     }
   });
-  const cancelHold = mountHoldConfirm(app, (id) => {
+  const cancelHold = mountHoldConfirm(app, (id, input) => {
     const match = liveMatch();
     if (match) {
       if (match.phase === "turn" && match.confirmationId === id) {
-        lobby.send({ type: "confirm", phaseId: match.phaseId, id });
+        lobby.send({ type: "confirm", phaseId: match.phaseId, id, input });
       }
       return;
     }
@@ -112,7 +115,7 @@ export function mountSurveyDemo(app: HTMLElement) {
     if (!remaining) {
       void finishTurn();
     } else if (game.confirmationCandidate(remaining <= visibleTurnClockWindow(game))?.id === id) {
-      void finishTurn(id);
+      void finishTurn(id, player);
     }
   });
 
@@ -382,39 +385,31 @@ export function mountSurveyDemo(app: HTMLElement) {
     </main>`;
   }
 
-  function results(match: SurveyDisplay) {
-    const standings = [...match.teams].sort((a, b) => b.score - a.score);
-    const winners = standings.filter((team) => team.score === standings[0].score);
-    return `<main class="survey-wrap survey-results">
-      <p class="survey-kicker">Три вопроса сыграны</p>
-      <h1>${winners.length > 1 ? "Ничья" : `Победили <em>${winners[0].name.toLowerCase()}</em>`}</h1>
-      ${winners.length > 1 ? `<p>${winners.map((team) => team.name).join(" · ")} набрали по ${winners[0].score} очков.</p>` : ""}
-      <ol>${standings.map((team) => {
-        const index = match.teams.indexOf(team);
-        return `<li class="survey-team-${fruitOf(index)}"><span>${renderFruit(fruitOf(index))}${team.name}</span><strong>${team.score}</strong></li>`;
-      }).join("")}</ol>
-      ${canAdvance() ? '<button class="survey-button primary-action" data-survey="reset">Сыграть ещё</button>' : '<p class="survey-muted">Ждём ведущего.</p>'}
-    </main>`;
-  }
-
   function render() {
     cancelHold();
     syncAnswerAward();
     const room = lobby.view;
     const live = room?.match;
     const match = room && live ? displayOnlineMatch(room, live) : game;
+    if (match?.phase !== "results") resultsUi.reset();
     app.classList.add("survey-app");
     app.classList.toggle("is-landing", !match && !room);
     app.innerHTML = `
       <header class="survey-header"><a href="./" class="survey-brand"><img src="${gamesLogo}" width="550" height="204" alt="И.Г.Р.Ы."></a>${match || room ? "<span>Сто к одному</span>" : ""}
-        ${!room && isDemo && game && game.phase !== "results" ? `<label class="survey-view-choice">Команда в демо
-          <select id="survey-view-team">
-            ${game.teams.map((team, index) => `<option value="${index}" ${viewingTeam === index ? "selected" : ""}>${escape(team.name)}</option>`).join("")}
-            <option value="auto" ${viewingTeam === null ? "selected" : ""}>Все по очереди</option>
-          </select></label>` : ""}<a href="./">Все игры</a></header>
+        ${!room && isDemo && game && game.phase !== "results" ? `<div class="survey-demo-tools">
+          <label class="survey-view-choice">Команда в демо
+            <select id="survey-view-team">
+              ${game.teams.map((team, index) => `<option value="${index}" ${viewingTeam === index ? "selected" : ""}>${escape(team.name)}</option>`).join("")}
+              <option value="auto" ${viewingTeam === null ? "selected" : ""}>Все по очереди</option>
+            </select>
+          </label>
+          <button class="survey-button secondary-action" type="button" data-survey="simulate-finish"
+            ${resolving || changingQuestion ? "disabled" : ""}>Симулировать конец игры</button>
+        </div>` : ""}<a href="./">Все игры</a></header>
       ${room && match ? lobby.connectionMarkup() : ""}
       ${room && live && viewingTeam === -1 ? '<p class="survey-online-state" role="status">Партия началась, пока вас не было. Можно смотреть и сыграть в следующей партии.</p>' : ""}
-      ${!match ? room ? lobby.lobbyMarkup() : setup() : match.phase === "results" ? results(match) : `
+      ${!match ? room ? lobby.lobbyMarkup() : setup() : match.phase === "results"
+        ? renderSurveyResults(match, { fruitOf, canAdvance: canAdvance(), selection: resultsUi.selection }) : `
         <main class="survey-wrap survey-match">
           ${teamSidebar(match)}
           <div class="survey-main">
@@ -485,11 +480,13 @@ export function mountSurveyDemo(app: HTMLElement) {
     const input = focused instanceof HTMLInputElement && focused.name === "answer" ? focused : null;
     const selection = input ? [input.selectionStart, input.selectionEnd] as const : null;
     const activeButton = focused instanceof HTMLButtonElement ? focused : null;
-    const focusAttribute = ["data-question-id", "data-expand-team", "data-vote", "data-confirm-proposal", "data-award-card"]
+    const focusAttribute = ["data-question-id", "data-expand-team", "data-vote", "data-confirm-proposal",
+      "data-award-card", "data-results-team", "data-results-title"]
       .find((attribute) => activeButton?.hasAttribute(attribute));
     render();
     if (changedPhase) {
-      const next = app.querySelector<HTMLElement>("#survey-ballot-title, #survey-propose input, .survey-ready-copy h2, .survey-panel h2");
+      const next = app.querySelector<HTMLElement>(
+        "#survey-ballot-title, #survey-propose input, .survey-ready-copy h2, .survey-panel h2, .survey-results h1");
       next?.focus({ preventScroll: true });
     } else if (selection) {
       const next = app.querySelector<HTMLInputElement>("#survey-propose input");
@@ -591,11 +588,49 @@ export function mountSurveyDemo(app: HTMLElement) {
     app.querySelector<HTMLElement>("#survey-propose input, .survey-panel.is-spectator h2")?.focus({preventScroll: true});
   }
 
-  async function finishTurn(confirmedProposalId?: number) {
+  function simulateDemoFinish() {
+    const match = game;
+    const deck = demoDeck;
+    if (!isDemo || lobby.view || !match || !deck || match.phase === "results" || resolving || changingQuestion) return;
+
+    if (questionBallot) {
+      const winner = questionBallot.finish(performance.now() + QUESTION_BALLOT_MS);
+      if (winner === undefined) return;
+      match.selectQuestion(winner);
+    }
+    for (let round = match.questionIndex; round < match.questionLimit; round++) {
+      while (match.phase === "turn") {
+        const simulated = !match.proposals.length;
+        const alternate = (round + Math.floor(match.turnIndex / match.teams.length)) %
+          match.teams[match.activeTeam].players.length;
+        if (simulated) {
+          const unopened = match.question.answers.filter((_, index) => !match.opened.has(index));
+          const answer = unopened[Math.floor(Math.random() * unopened.length)];
+          const text = match.turnIndex === match.teams.length ? DEMO_MISSES[round % DEMO_MISSES.length] : answer.label;
+          match.propose(match.activeTeam === 0 ? 0 : alternate, text);
+        }
+        const candidate = match.votes.size ? undefined : match.confirmationCandidate(true);
+        const confirmedBy = simulated && candidate ? (match.activeTeam === 1 ? 0 : alternate) : undefined;
+        match.finishTurn(candidate?.id, confirmedBy);
+      }
+      match.nextQuestion();
+      if (round + 1 < match.questionLimit) match.selectQuestion(deck.draw()[0]);
+    }
+    questionBallot = null;
+    readiness = null;
+    deadline = 0;
+    votingOnly = false;
+    draft = "";
+    proposalError = "";
+    render();
+    app.querySelector<HTMLElement>(".survey-results h1")?.focus();
+  }
+
+  async function finishTurn(confirmedProposalId?: number, confirmedBy?: number) {
     if (!game || !deadline || resolving) return;
     const match = game;
     const proposals = [...match.proposals];
-    match.finishTurn(confirmedProposalId);
+    match.finishTurn(confirmedProposalId, confirmedBy);
     deadline = 0;
     const result = match.lastAnswer!;
     const source = proposalPosition(proposals, result);
@@ -851,6 +886,7 @@ export function mountSurveyDemo(app: HTMLElement) {
       return;
     }
     if (resolving || changingQuestion) return;
+    if (action === "simulate-finish") { simulateDemoFinish(); return; }
     if (button.dataset.expandTeam !== undefined) {
       const team = Number(button.dataset.expandTeam);
       expandedTeam = expandedTeam === team ? null : team;

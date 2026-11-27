@@ -1,4 +1,5 @@
 import type { TurnResult } from "../src/survey/survey";
+import type { SurveyMatchStats, SurveyTitle } from "../src/survey/match-stats";
 
 export const SURVEY_ROOM = "survey";
 export const SURVEY_CODE = /^S[0-9A-F]{6}$/;
@@ -54,6 +55,7 @@ export type SurveyMatchView = {
   confirmationId: number | null;
   resolution: TurnResult | null;
   turnHistory: TurnResult[];
+  resultsStats?: SurveyMatchStats;
 };
 
 export type SurveyRoomView = {
@@ -78,6 +80,10 @@ export function canStartSurvey(
     players.filter(({ connected }) => connected).length >= SURVEY_MIN_TEAM_SIZE);
 }
 
+export type SurveyResultsInteraction =
+  | { kind: "open-team" | "close-team"; team: number }
+  | { kind: "open-title" | "close-title"; title: SurveyTitle["id"] };
+
 export type SurveyOnlineAction =
   | { type: "start" }
   | { type: "add-team" }
@@ -93,7 +99,7 @@ export type SurveyOnlineAction =
       | { type: "ready" }
       | { type: "propose"; text: string }
       | { type: "vote"; id: number }
-      | { type: "confirm"; id: number }
+      | { type: "confirm"; id: number; input?: "pointer" | "keyboard" }
       | { type: "award-answer"; answerIndex: number; team: number }
       | { type: "next" }
       | { type: "replay" }

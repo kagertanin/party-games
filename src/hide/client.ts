@@ -11,6 +11,7 @@ export function mount(app: HTMLElement) {
     canvas = root.querySelector("canvas")!,
     hud = root.querySelector<HTMLElement>(".hide-hud")!,
     out = root.querySelector("output")!;
+  const action = root.querySelector<HTMLButtonElement>(".action")!;
   const code = new URL(location.href).searchParams.get("room");
   const client = new Client(
     import.meta.env.VITE_SERVER_URL ||
@@ -22,6 +23,7 @@ export function mount(app: HTMLElement) {
     view: Snapshot | undefined,
     scene: Awaited<ReturnType<typeof createScene>> | undefined,
     ready = false,
+    sceneFailed = false,
     generation = 0,
     seenAt = 0,
     stamp = "",
@@ -97,8 +99,8 @@ export function mount(app: HTMLElement) {
         scene = await createScene(
           canvas,
           r.sessionId,
-          (i) => room?.send("input", i),
-          () => room?.send("use", { seen: view?.now }),
+          (batch) => room?.send("move", batch),
+          (aim, seen) => room?.send("use", { aim, seen }),
         );
         if (gen !== generation) return;
         ready = true;
@@ -106,9 +108,9 @@ export function mount(app: HTMLElement) {
         stamp = "";
         render();
       } catch {
-        panel.hidden = false;
-        panel.innerHTML =
-          "<h1>Офис не загрузился</h1><p>Проверьте доступность WebGL и обновите страницу.</p>";
+        sceneFailed = true;
+        stamp = "";
+        render();
       }
     }
   }
@@ -119,27 +121,25 @@ export function mount(app: HTMLElement) {
     if (!me) return;
     const play =
       ready && (v.phase === "hunt" || (v.phase === "hide" && !me.hunter));
-    root.dataset.play = String(play);
-    panel.hidden = play;
-    const action = root.querySelector<HTMLButtonElement>(".action")!;
-    action.textContent = me.hunter ? "Выстрел" : "Скопировать";
-    action.hidden = !me.alive;
-    if (play) {
-      stamp = "";
-      return;
-    }
-    if (document.pointerLockElement) document.exitPointerLock();
-    const signature = JSON.stringify([
-      ready,
-      v.phase,
-      v.winner,
-      v.host,
-      v.players.map((p) => [p.id, p.name, p.hunter, p.online]),
-    ]);
+    // Most snapshots only move characters. Update DOM on visible state changes.
+    const signature = play
+      ? "play:" + me.hunter + ":" + me.alive
+      : JSON.stringify([
+          ready, sceneFailed, v.phase, v.winner, v.host,
+          v.phase === "lobby" && v.players.map((p) => [p.id, p.name, p.hunter, p.online]),
+        ]);
     if (stamp === signature) return;
     stamp = signature;
+    root.dataset.play = String(play);
+    panel.hidden = play;
+    action.textContent = me.hunter ? "Выстрел" : "Скопировать";
+    action.hidden = !me.alive;
+    if (play) return;
+    if (document.pointerLockElement) document.exitPointerLock();
     if (!ready) {
-      panel.innerHTML = "<h1>Загружаем офис…</h1>";
+      panel.innerHTML = sceneFailed
+        ? "<h1>Офис не загрузился</h1><p>Проверьте доступность WebGL и обновите страницу.</p>"
+        : "<h1>Загружаем офис…</h1>";
       return;
     }
     if (v.phase === "hide") {
@@ -217,8 +217,8 @@ export function mount(app: HTMLElement) {
     const time =
       Math.floor(left / 60) + ":" + String(left % 60).padStart(2, "0");
     const clock = panel.querySelector(".clock");
-    if (clock) clock.textContent = time;
-    hud.textContent =
+    if (clock && clock.textContent !== time) clock.textContent = time;
+    const status =
       (me.alive
         ? me.hunter
           ? "Водящий · " + me.ammo + "/6"
@@ -228,11 +228,13 @@ export function mount(app: HTMLElement) {
       time +
       "   Осталось: " +
       view.remaining;
-    hud.dataset.hint = matchMedia("(pointer:coarse)").matches
+    if (hud.textContent !== status) hud.textContent = status;
+    const hint = matchMedia("(pointer:coarse)").matches
       ? "Слева — движение, справа — обзор"
       : "WASD — движение · мышь — обзор · " +
         (me.hunter ? "ЛКМ — выстрел" : "E — скопировать") +
         " · щёлкните для захвата мыши";
+    if (hud.dataset.hint !== hint) hud.dataset.hint = hint;
   }, 150);
   const pad = root.querySelector<HTMLElement>(".stick")!;
   function joystick(e: PointerEvent) {
@@ -249,8 +251,7 @@ export function mount(app: HTMLElement) {
     if (pad.hasPointerCapture(e.pointerId)) joystick(e);
   };
   pad.onlostpointercapture = () => scene?.joystick(0, 0);
-  root.querySelector<HTMLButtonElement>(".action")!.onclick = () =>
-    scene?.action();
+  action.onclick = () => scene?.action();
   window.addEventListener("pagehide", () => room?.connection.close());
   async function resume(token: string) {
     panel.innerHTML = "<h1>Возвращаемся в комнату…</h1>";

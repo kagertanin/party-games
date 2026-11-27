@@ -24,9 +24,9 @@ export function mountHome(app: HTMLElement) {
           </button>
         </li>
         <li>
-          <button type="button" class="game-patch" disabled>
+          <a class="game-patch" href="?game=draw">
             <img src="${draw}" width="355" height="640" alt="Рисовач">
-          </button>
+          </a>
         </li>
         <li>
           <a class="game-patch" href="?game=hide">

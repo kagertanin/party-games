@@ -1,19 +1,22 @@
 import * as T from "three";
+import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import {
   office,
   models,
-  obstacles,
-  intersect,
+  cameraBoom,
+  cameraDistance,
   rad,
   eye,
-  walk,
   target,
   direction,
   type Player,
   type Snapshot,
   type Input,
 } from "../../shared/hide/world";
+
+import type { MoveBatch } from "../../shared/hide/movement";
+import { LocalMotion, RemoteMotion } from "./motion";
 
 const palette: Record<string, number> = {
   concrete: 0xa8aeb5,
@@ -32,19 +35,26 @@ const palette: Record<string, number> = {
 export async function createScene(
   canvas: HTMLCanvasElement,
   id: string,
-  send: (input: Input) => void,
-  use: () => void,
+  send: (batch: MoveBatch) => void,
+  use: (aim: Input, seen: number) => void,
 ) {
   const renderer = new T.WebGLRenderer({
     canvas,
     antialias: true,
     powerPreference: "high-performance",
   });
-  renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 1));
   const scene = new T.Scene();
   scene.background = new T.Color(0xc1dbe6);
   const camera = new T.PerspectiveCamera(72, 1, 0.035, 175);
   camera.rotation.order = "YXZ";
+  new ResizeObserver(([entry]) => {
+    const { width, height } = entry.contentRect;
+    if (!width || !height) return;
+    renderer.setSize(width, height, false);
+    camera.aspect = width / height;
+    camera.updateProjectionMatrix();
+  }).observe(canvas);
   scene.add(new T.HemisphereLight(0xfff3e0, 0xc3cbd5, 2));
   const sun = new T.DirectionalLight(0xffefd7, 2);
   sun.position.set(-18, 32, 22);
@@ -121,32 +131,53 @@ export async function createScene(
   part(0.34, 0.35, 0.33, 1.5, 0xedbf98);
   part(0.36, 0.1, 0.35, 1.7, 0x44445c);
   for (const x of [-0.13, 0.13]) part(0.19, 0.62, 0.23, 0.32, 0x354256, x);
-  // Batch repeated office objects and wall pieces on the GPU.
+  // The office assets use solid PBR colours. Bake their colours and transforms
+  // once, so unlike per-model instancing, different models share a draw call.
   const batches = new Map<
     string,
-    {
-      geometry: T.BufferGeometry;
-      material: T.Material | T.Material[];
-      matrices: T.Matrix4[];
-    }
+    { pieces: T.BufferGeometry[]; material: T.MeshStandardMaterial }
   >();
   function collect(obj: T.Object3D) {
     obj.updateMatrixWorld(true);
     obj.traverse((node) => {
-      if (!(node instanceof T.Mesh)) return;
-      const key =
-        node.geometry.uuid +
-        ":" +
-        (Array.isArray(node.material)
-          ? node.material.map((m) => m.uuid).join()
-          : node.material.uuid);
-      if (!batches.has(key))
-        batches.set(key, {
-          geometry: node.geometry,
-          material: node.material,
-          matrices: [],
-        });
-      batches.get(key)!.matrices.push(node.matrixWorld.clone());
+      if (
+        !(node instanceof T.Mesh) ||
+        !(node.material instanceof T.MeshStandardMaterial)
+      )
+        return;
+      const source = node.material;
+      // Split by office quadrant for frustum culling and preserve surface properties.
+      const key = [
+        obj.position.x < 0,
+        obj.position.z < 0,
+        source.roughness,
+        source.metalness,
+        source.side,
+        source.transparent,
+        source.opacity,
+        source.depthWrite,
+      ].join(":");
+      let batch = batches.get(key);
+      if (!batch) {
+        const material = source.clone();
+        material.color.setRGB(1, 1, 1);
+        material.vertexColors = true;
+        batch = { material, pieces: [] };
+        batches.set(key, batch);
+      }
+      const geometry = node.geometry.clone().applyMatrix4(node.matrixWorld);
+      const colors = new Float32Array(geometry.getAttribute("position").count * 3);
+      for (let i = 0; i < colors.length; i += 3) source.color.toArray(colors, i);
+      geometry.setAttribute("color", new T.BufferAttribute(colors, 3));
+      // These models have no textures. Discard their unused texture coordinates.
+      for (const name of Object.keys(geometry.attributes))
+        if (name !== "position" && name !== "normal" && name !== "color")
+          geometry.deleteAttribute(name);
+      if (!geometry.index) {
+        const count = geometry.getAttribute("position").count;
+        geometry.setIndex(Array.from({ length: count }, (_, i) => i));
+      }
+      batch.pieces.push(geometry);
     });
   }
   const materials = new Map<string, T.MeshStandardMaterial>();
@@ -178,11 +209,12 @@ export async function createScene(
     obj.rotation.y = (p.yaw ?? 0) * rad;
     collect(obj);
   }
-  for (const b of batches.values()) {
-    const mesh = new T.InstancedMesh(b.geometry, b.material, b.matrices.length);
-    b.matrices.forEach((m, i) => mesh.setMatrixAt(i, m));
-    scene.add(mesh);
+  for (const batch of batches.values()) {
+    const geometry = mergeGeometries(batch.pieces);
+    if (!geometry) throw Error("Не удалось объединить модели офиса");
+    scene.add(new T.Mesh(geometry, batch.material));
   }
+  batches.clear();
   let view: Snapshot | undefined,
     self: Player | undefined,
     yaw = 0,
@@ -190,24 +222,37 @@ export async function createScene(
     phase = "",
     last = performance.now(),
     sent = 0,
-    correctionX = 0,
-    correctionZ = 0;
+    renderedTime = 0;
+  let prediction: LocalMotion | undefined;
+  const remotes = new RemoteMotion();
   const actors = new Map<string, { obj: T.Group; form: string }>();
   const keys = new Set<string>();
   let touchX = 0,
     touchY = 0;
   const input = (): Input => ({
-    side: Number(keys.has("KeyD")) - Number(keys.has("KeyA")) + touchX,
-    forward: Number(keys.has("KeyW")) - Number(keys.has("KeyS")) + touchY,
+    side: T.MathUtils.clamp(Number(keys.has("KeyD")) - Number(keys.has("KeyA")) + touchX, -1, 1),
+    forward: T.MathUtils.clamp(Number(keys.has("KeyW")) - Number(keys.has("KeyS")) + touchY, -1, 1),
     yaw,
     pitch,
   });
+  function flush() {
+    let batch;
+    while ((batch = prediction?.takeBatch())) send(batch);
+  }
+  function action() {
+    flush();
+    use(input(), renderedTime || view?.now || 0);
+  }
   function stop() {
     keys.clear();
     touchX = touchY = 0;
-    if (self) send(input());
+    flush();
   }
   window.addEventListener("blur", stop);
+  document.addEventListener("visibilitychange", () => {
+    last = performance.now();
+    if (document.hidden) stop();
+  });
   document.addEventListener("pointerlockchange", () => {
     if (!document.pointerLockElement) stop();
   });
@@ -223,8 +268,7 @@ export async function createScene(
     if (!canvas.offsetWidth || e.target instanceof HTMLInputElement) return;
     keys.add(e.code);
     if (e.code === "KeyE" && !e.repeat) {
-      send(input());
-      use();
+      action();
     }
   });
   window.addEventListener("keyup", (e) => keys.delete(e.code));
@@ -235,8 +279,7 @@ export async function createScene(
       return;
     }
     if (self?.hunter) {
-      send(input());
-      use();
+      action();
     }
   });
   let touch: { id: number; x: number; y: number } | undefined;
@@ -257,48 +300,43 @@ export async function createScene(
   function update(v: Snapshot) {
     const me = v.players.find((p) => p.id === id);
     if (!me) return;
-    if (
-      !self ||
-      phase === "lobby" ||
-      phase === "results" ||
-      v.phase === "lobby"
-    ) {
+    const active = me.alive && (v.phase === "hunt" || (v.phase === "hide" && !me.hunter));
+    if (!prediction || !active) {
       yaw = me.yaw;
       pitch = me.pitch;
       self = { ...me };
-      correctionX = correctionZ = 0;
+      prediction = active ? new LocalMotion(me, v.ack) : undefined;
+      last = performance.now();
+      sent = 0;
     } else {
-      correctionX = me.x - self.x;
-      correctionZ = me.z - self.z;
-      self = { ...me, x: self.x, z: self.z };
+      prediction.reconcile(me, v.ack);
+      self = prediction.pose(input());
     }
+    remotes.push(v, performance.now());
     phase = v.phase;
     view = v;
   }
   function frame() {
     requestAnimationFrame(frame);
     const now = performance.now(),
-      dt = Math.min(0.05, (now - last) / 1000);
+      dt = Math.min(0.2, (now - last) / 1000);
     last = now;
-    if (!view || !self || !canvas.offsetWidth) return;
-    const active =
-      self.alive && (phase === "hunt" || (phase === "hide" && !self.hunter));
-    if (active) {
+    if (
+      !view || !self || document.hidden ||
+      !(phase === "hunt" || (phase === "hide" && !self.hunter))
+    ) return;
+    if (prediction) {
       const i = input();
-      walk(self, i, dt);
-      const blend = 1 - Math.exp(-dt * 7);
-      self.x += correctionX * blend;
-      self.z += correctionZ * blend;
-      correctionX *= 1 - blend;
-      correctionZ *= 1 - blend;
+      prediction.advance(i, dt);
+      self = prediction.pose(i);
       if (now - sent >= 50) {
-        send(i);
+        flush();
         sent = now;
       }
     }
-    const follow = self.alive
-      ? self
-      : (view.players.find((p) => p.hunter) ?? self);
+    renderedTime = remotes.at(now);
+    const hunter = !self.alive && view.players.find(p => p.hunter);
+    const follow = hunter ? remotes.pose(hunter, renderedTime) : self;
     const angle = follow === self ? yaw : follow.yaw,
       tilt = follow === self ? pitch : follow.pitch;
     camera.rotation.set(tilt, angle, 0, "YXZ");
@@ -308,18 +346,12 @@ export async function createScene(
       const forward = direction(angle, tilt),
         at = camera.position.toArray();
       const offset = new T.Vector3(
-        -forward[0] * 2.8 + Math.cos(angle) * 0.65,
-        -forward[1] * 2.8 + 0.48,
-        -forward[2] * 2.8 - Math.sin(angle) * 0.65,
+        -forward[0] * cameraBoom + Math.cos(angle) * 0.65,
+        -forward[1] * cameraBoom + 0.48,
+        -forward[2] * cameraBoom - Math.sin(angle) * 0.65,
       );
       const back = offset.normalize().toArray();
-      let dist = 2.8;
-      for (const o of obstacles)
-        dist = Math.min(dist, intersect(at, back, o) - 0.08);
-      camera.position.addScaledVector(
-        new T.Vector3().fromArray(back),
-        Math.max(0.01, dist),
-      );
+      camera.position.addScaledVector(offset, cameraDistance(at, back));
       const aim = target({ ...follow, yaw: angle, pitch: tilt });
       camera.lookAt(
         new T.Vector3()
@@ -347,11 +379,8 @@ export async function createScene(
         actors.set(p.id, a);
         scene.add(obj);
       }
-      const local = p.id === id ? self : p;
-      a.obj.position.lerp(
-        new T.Vector3(local.x, 0, local.z),
-        p.id === id ? 1 : 1 - Math.exp(-20 * dt),
-      );
+      const local = p.id === id ? self : remotes.pose(p, renderedTime);
+      a.obj.position.set(local.x, 0, local.z);
       a.obj.rotation.y = local.facing;
       a.obj.visible =
         !(follow.hunter && follow.id === p.id) &&
@@ -362,16 +391,6 @@ export async function createScene(
             0.45
         );
     }
-    const w = canvas.clientWidth,
-      h = canvas.clientHeight;
-    if (
-      camera.aspect !== w / h ||
-      canvas.width !== Math.floor(w * renderer.getPixelRatio())
-    ) {
-      renderer.setSize(w, h, false);
-      camera.aspect = w / h;
-      camera.updateProjectionMatrix();
-    }
     renderer.render(scene, camera);
   }
   frame();
@@ -381,9 +400,6 @@ export async function createScene(
       touchX = x;
       touchY = y;
     },
-    action: () => {
-      send(input());
-      use();
-    },
+    action,
   };
 }

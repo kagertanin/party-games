@@ -134,3 +134,53 @@ test(
     await until(host, (s) => s.phase === "lobby");
   },
 );
+
+test("movement resumes at the last acknowledgement after reconnecting mid-round", { timeout: 10000 }, async (t) => {
+  const server = await startServer(0);
+  const address = server.transport.server!.address()!;
+  assert.ok(typeof address !== "string");
+  const client = new Client("http://127.0.0.1:" + address.port);
+  const rooms: Room[] = [];
+  const states = new Map<Room, Snapshot>();
+  t.after(async () => {
+    await Promise.allSettled(rooms.map(room => room.leave()));
+    await server.gracefullyShutdown(false);
+  });
+  function listen(room: Room) {
+    rooms.push(room);
+    room.onMessage("view", state => states.set(room, state));
+    room.send("sync");
+    return room;
+  }
+  async function viewWhen(room: Room, check: (state: Snapshot) => boolean) {
+    for (let i = 0; i < 200; i++) {
+      const state = states.get(room);
+      if (state && check(state)) return state;
+      await wait(10);
+    }
+    assert.fail("Timed out waiting for movement state");
+  }
+
+  const host = listen(await client.create("hide"));
+  const guest = listen(await client.joinById(host.roomId));
+  host.send("start");
+  await viewWhen(guest, s => s.phase === "hide");
+  const oneStep = { side: 1, forward: 0, yaw: 0, pitch: 0 };
+  guest.send("move", { first: 1, inputs: [oneStep, oneStep, oneStep] });
+  const before = await viewWhen(guest, s => s.ack === 3);
+  const token = guest.reconnectionToken;
+  const game = matchMaker.getLocalRoomById(host.roomId) as unknown as { until: number };
+  game.until = Date.now();
+  await viewWhen(host, s => s.phase === "hunt");
+  guest.connection.close();
+  await viewWhen(host, s => s.players.some(p => p.id === guest.sessionId && !p.online));
+  rooms.splice(rooms.indexOf(guest), 1);
+  const resumed = listen(await client.reconnect(token));
+  assert.equal(resumed.sessionId, guest.sessionId);
+  const after = await viewWhen(resumed, s => s.ack === 3);
+  const x = (s: Snapshot) => s.players.find(p => p.id === resumed.sessionId)!.x;
+  assert.equal(x(before), x(after));
+  resumed.send("move", { first: 4, inputs: [oneStep] });
+  const moved = await viewWhen(resumed, s => s.ack === 4);
+  assert.ok(Math.abs(x(moved) - x(before) - 4.6 / 60) < 1e-8);
+});

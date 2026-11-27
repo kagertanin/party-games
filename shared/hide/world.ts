@@ -19,6 +19,7 @@ export interface Player {
   ammo: number;
 }
 export interface Snapshot {
+  ack: number;
   players: Player[];
   host: string;
   phase: Phase;
@@ -41,7 +42,8 @@ type Bounds = {
   w: number;
   h: number;
   d: number;
-  angle: number;
+  cosine: number;
+  sine: number;
   prop: number;
 };
 const bounds = (
@@ -56,7 +58,8 @@ const bounds = (
   w: size[0] / 2,
   h: size[1] / 2,
   d: size[2] / 2,
-  angle,
+  cosine: Math.cos(angle),
+  sine: Math.sin(angle),
   prop,
 });
 export const obstacles: Bounds[] = office.boxes
@@ -68,12 +71,43 @@ office.props.forEach((p, i) => {
     bounds([p.at[0], p.at[1] + s[1] / 2, p.at[2]], s, (p.yaw ?? 0) * rad, i),
   );
 });
+// Pads each cell by the longest nearby query: the third-person camera boom.
+// One lookup then covers both the boom and the player's (smaller) collision radius.
+const cellSize = 4;
+export const cameraBoom = 2.8;
+const cameraMargin = 0.08;
+const padding = cameraBoom + cameraMargin;
+const grid = new Map<string, Bounds[]>();
+const cell = (v: number) => Math.floor(v / cellSize);
+const cellKey = (x: number, z: number) => x + ":" + z;
+for (const o of obstacles) {
+  const halfX = Math.abs(o.cosine) * o.w + Math.abs(o.sine) * o.d + padding;
+  const halfZ = Math.abs(o.sine) * o.w + Math.abs(o.cosine) * o.d + padding;
+  for (let x = cell(o.x - halfX); x <= cell(o.x + halfX); x++) {
+    for (let z = cell(o.z - halfZ); z <= cell(o.z + halfZ); z++) {
+      const key = cellKey(x, z);
+      let local = grid.get(key);
+      if (!local) grid.set(key, (local = []));
+      local.push(o);
+    }
+  }
+}
+const empty: Bounds[] = [];
+function near(x: number, z: number) {
+  return grid.get(cellKey(cell(x), cell(z))) ?? empty;
+}
+export function cameraDistance(at: number[], dir: number[]) {
+  let distance = cameraBoom;
+  for (const o of near(at[0], at[2]))
+    distance = Math.min(distance, intersect(at, dir, o) - cameraMargin);
+  return Math.max(0.01, distance);
+}
 export function body(p: Player) {
   const s = models[p.form]?.size ?? [0.52, 1.72, 0.52];
   return bounds([p.x, s[1] / 2, p.z], s, p.facing, -2);
 }
 export function eye(p: Player) {
-  return Math.max(0.23, body(p).h * 1.75);
+  return Math.max(0.23, (models[p.form]?.size[1] ?? 1.72) * 0.875);
 }
 export function walk(p: Player, input: Input, seconds: number) {
   p.yaw = input.yaw;
@@ -93,12 +127,12 @@ export function fits(p: Player, x: number, z: number) {
   if (Math.abs(x) > 49 || Math.abs(z) > 44) return false;
   const b = body(p);
   const radius = Math.max(0.09, Math.min(0.75, Math.max(b.w, b.d) * 0.85));
-  return !obstacles.some((o) => {
+  return !near(x, z).some((o) => {
     if (o.y + o.h < 0.075 || o.y - o.h >= 2 * b.h - 0.02) return false;
     const dx = x - o.x,
       dz = z - o.z,
-      c = Math.cos(o.angle),
-      s = Math.sin(o.angle);
+      c = o.cosine,
+      s = o.sine;
     return (
       Math.hypot(
         Math.max(0, Math.abs(dx * c - dz * s) - o.w),
@@ -115,8 +149,8 @@ export function direction(yaw: number, pitch: number) {
   ];
 }
 export function intersect(origin: number[], dir: number[], o: Bounds) {
-  const c = Math.cos(o.angle),
-    s = Math.sin(o.angle),
+  const c = o.cosine,
+    s = o.sine,
     x = origin[0] - o.x,
     z = origin[2] - o.z;
   const pos = [x * c - z * s, origin[1] - o.y, x * s + z * c];
