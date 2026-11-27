@@ -33,7 +33,20 @@ function act(r: Room, type: string, data: Record<string, unknown> = {}) {
 }
 try {
   rooms.push(watch(await sdk.create(DRAW_ROOM, { name: "Проверка 1" })));
-  for (let i = 1; i < 12; i++)
+  const extra = watch(
+    await sdk.joinById(rooms[0].roomId, { name: "Запасной" }),
+  );
+  const guest = watch(
+    await sdk.joinById(rooms[0].roomId, { name: "Проверка 2" }),
+  );
+  rooms.push(guest);
+  await until(() => view(guest)?.players.length === 3, "initial lobby");
+  act(guest, "kick", { member: extra.sessionId });
+  await until(() => view(extra)?.players.length === 3, "guest cannot remove");
+  const removed = new Promise<number>((resolve) => extra.onLeave(resolve));
+  act(rooms[0], "kick", { member: extra.sessionId });
+  assert.equal(await removed, 4005);
+  for (let i = 2; i < 12; i++)
     rooms.push(
       watch(
         await sdk.joinById(rooms[0].roomId, { name: "Проверка " + (i + 1) }),
@@ -125,6 +138,11 @@ try {
       act(r, "vote", { choice: truth.id });
     }
     await until(() => allAt("reveal", i), "reveal " + i);
+    await until(() => view(rooms[0]).reveal?.kind === "suspense", "suspense");
+    assert.equal(view(rooms[0]).reveal!.titles[0].author, undefined);
+    await until(() => view(rooms[0]).reveal?.kind === "false", "bluff");
+    assert.equal(view(rooms[0]).reveal!.awards[0].amount, 500);
+    await until(() => view(rooms[0]).reveal?.kind === "truth", "truth last");
     for (const p of view(rooms[0]).players) {
       assert.equal(p.points, expected.get(p.id)!.points);
       assert.equal(p.likes, expected.get(p.id)!.likes);

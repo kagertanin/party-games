@@ -10,7 +10,7 @@ export function mountCanvas(
     <label>Кисть <input aria-label="Ширина кисти" type="range" min="1" max="40" value="5"></label>
     <button type="button" data-erase aria-pressed="false">Ластик</button>
     <button type="button" data-undo title="Ctrl+Z / ⌘Z">Отменить</button></div>
-    <canvas width="640" height="480" aria-label="Поле для рисования"></canvas>
+    <div class="draw-canvas-frame"><canvas width="640" height="480" aria-label="Поле для рисования"></canvas><span class="draw-brush-tip" hidden aria-hidden="true"></span></div>
     <button class="primary" data-finish>Готово</button>`;
   const canvas = root.querySelector("canvas")!;
   const ctx = canvas.getContext("2d")!;
@@ -19,6 +19,38 @@ export function mountCanvas(
   const eraser = root.querySelector<HTMLButtonElement>("[data-erase]")!;
   const undo = root.querySelector<HTMLButtonElement>("[data-undo]")!;
   const finish = root.querySelector<HTMLButtonElement>("[data-finish]")!;
+  const tip = root.querySelector<HTMLElement>(".draw-brush-tip")!;
+  let hover: { x: number; y: number } | undefined;
+  function updateTip() {
+    if (!hover) {
+      tip.hidden = true;
+      return;
+    }
+    const b = canvas.getBoundingClientRect();
+    const x = hover.x - b.left,
+      y = hover.y - b.top;
+    tip.hidden = x < 0 || y < 0 || x > b.width || y > b.height;
+    tip.style.left = x + "px";
+    tip.style.top = y + "px";
+    tip.style.width = (Number(width.value) * b.width) / canvas.width + "px";
+    tip.style.height = (Number(width.value) * b.height) / canvas.height + "px";
+    const erase = eraser.getAttribute("aria-pressed") === "true";
+    tip.style.backgroundColor = erase ? "transparent" : color.value;
+    tip.classList.toggle("is-eraser", erase);
+  }
+  function preview(e: PointerEvent) {
+    hover =
+      e.pointerType === "touch" ? undefined : { x: e.clientX, y: e.clientY };
+    updateTip();
+  }
+  canvas.onpointerenter = preview;
+  canvas.onpointerleave = () => {
+    hover = undefined;
+    updateTip();
+  };
+  const observer = new ResizeObserver(updateTip);
+  observer.observe(canvas);
+  width.oninput = updateTip;
   const key = "draw.draft." + uploadUrl.split("/").pop();
   let strokes: Stroke[] = [];
   try {
@@ -73,6 +105,7 @@ export function mountCanvas(
   }
   canvas.onpointerdown = (e) => {
     if (closing || active !== null || e.button !== 0) return;
+    preview(e);
     e.preventDefault();
     canvas.setPointerCapture(e.pointerId);
     active = e.pointerId;
@@ -89,6 +122,7 @@ export function mountCanvas(
     undo.disabled = false;
   };
   canvas.onpointermove = (e) => {
+    preview(e);
     if (active !== e.pointerId || closing) return;
     const s = strokes[strokes.length - 1],
       p = point(e),
@@ -113,12 +147,17 @@ export function mountCanvas(
     saveDraft();
   }
   undo.onclick = back;
-  color.oninput = () => eraser.setAttribute("aria-pressed", "false");
-  eraser.onclick = () =>
+  color.oninput = () => {
+    eraser.setAttribute("aria-pressed", "false");
+    updateTip();
+  };
+  eraser.onclick = () => {
     eraser.setAttribute(
       "aria-pressed",
       String(eraser.getAttribute("aria-pressed") !== "true"),
     );
+    updateTip();
+  };
   const keydown = (e: KeyboardEvent) => {
     if ((e.ctrlKey || e.metaKey) && e.code === "KeyZ" && !e.shiftKey) {
       e.preventDefault();
@@ -172,6 +211,7 @@ export function mountCanvas(
     submit,
     dispose(clear: boolean) {
       ended = true;
+      observer.disconnect();
       clearInterval(timer);
       clearInterval(retryFinal);
       window.removeEventListener("keydown", keydown);

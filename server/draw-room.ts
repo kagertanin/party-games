@@ -2,6 +2,8 @@ import { Room, type Client } from "@colyseus/core";
 import { randomBytes, randomInt, randomUUID } from "node:crypto";
 import {
   DRAW_MIN,
+  DRAW_KICKED,
+  DRAW_INTRO,
   DRAW_MAX,
   DRAW_TIMES,
   type Phase,
@@ -24,7 +26,7 @@ const normalize = (s: string) =>
     .toLocaleLowerCase("ru")
     .replace(/ё/g, "е")
     .replace(/[^\p{L}\p{N}]/gu, "");
-type Option = { id: string; text: string; author: string; truth: boolean };
+import { prepareReveal, type DrawOption as Option } from "./draw-reveal.js";
 type Picture = { prompt: string; slot: ReturnType<typeof pictureSlot> };
 export class DrawRoom extends Room {
   private phase: Phase = "lobby";
@@ -32,6 +34,10 @@ export class DrawRoom extends Room {
   private deadline = 0;
   private host = "";
   private members = new Map<string, DrawPlayer>();
+  private reconnecting = new Map<
+    string,
+    ReturnType<DrawRoom["allowReconnection"]>
+  >();
   private pictures = new Map<string, Picture>();
   private order: string[] = [];
   private turn = 0;
@@ -40,7 +46,9 @@ export class DrawRoom extends Room {
   private choices: Option[] = [];
   private votes = new Map<string, string>();
   private hearts = new Map<string, Set<string>>();
-  private gains: Record<string, number> = {};
+  private startedAt = 0;
+  private beats: ReturnType<typeof prepareReveal> = [];
+  private beat = 0;
   onCreate() {
     this.roomId = "R" + randomBytes(3).toString("hex").toUpperCase();
     this.maxClients = DRAW_MAX;
@@ -97,7 +105,9 @@ export class DrawRoom extends Room {
     this.broadcastView();
     if (!consented) {
       try {
-        const resumed = await this.allowReconnection(client, 180);
+        const reservation = this.allowReconnection(client, 180);
+        this.reconnecting.set(p.id, reservation);
+        const resumed = await reservation;
         if (!this.members.has(p.id)) {
           void resumed.leave(4002);
           return;
@@ -107,7 +117,9 @@ export class DrawRoom extends Room {
         this.broadcastView();
         return;
       } catch {
-        /* Seat expired. */
+        /* The seat expired or the host removed it. */
+      } finally {
+        this.reconnecting.delete(p.id);
       }
     }
     if (this.phase === "lobby") this.members.delete(p.id);
@@ -123,10 +135,11 @@ export class DrawRoom extends Room {
   private setStage(phase: Phase) {
     this.phase = phase;
     this.epoch++;
+    this.startedAt = Date.now();
     this.deadline =
       phase === "lobby" || phase === "results"
         ? 0
-        : Date.now() + DRAW_TIMES[phase];
+        : this.startedAt + DRAW_TIMES[phase] + DRAW_INTRO;
   }
   private start() {
     const players = [...this.members.values()].filter((p) => p.connected);
@@ -161,8 +174,27 @@ export class DrawRoom extends Room {
   }
   private action(
     id: string,
-    msg: { type?: unknown; text?: unknown; choice?: unknown; likes?: unknown },
+    msg: {
+      type?: unknown;
+      text?: unknown;
+      choice?: unknown;
+      likes?: unknown;
+      member?: unknown;
+    },
   ) {
+    if (this.phase === "lobby" && id === this.host && msg.type === "kick") {
+      if (
+        typeof msg.member !== "string" ||
+        msg.member === id ||
+        !this.members.has(msg.member)
+      )
+        return;
+      const target = this.clients.find((c) => c.sessionId === msg.member);
+      this.members.delete(msg.member);
+      this.reconnecting.get(msg.member)?.reject(new Error("Removed by host"));
+      if (target) target.leave(DRAW_KICKED, "Removed by host");
+      return;
+    }
     if (this.phase === "lobby" && id === this.host && msg.type === "start")
       return this.start();
     if (this.phase === "results" && id === this.host && msg.type === "again") {
@@ -254,7 +286,8 @@ export class DrawRoom extends Room {
     this.choices = [];
     this.votes.clear();
     this.hearts.clear();
-    this.gains = {};
+    this.beats = [];
+    this.beat = 0;
     this.setStage(this.turn < this.order.length ? "captions" : "results");
   }
   private advance() {
@@ -280,10 +313,21 @@ export class DrawRoom extends Room {
         this.setStage("vote");
         break;
       case "vote":
-        this.score();
+        this.beats = prepareReveal(
+          this.choices,
+          this.votes,
+          this.hearts,
+          this.members,
+        );
+        this.beat = 0;
         this.setStage("reveal");
+        this.showBeat();
         break;
       case "reveal":
+        if (++this.beat < this.beats.length) {
+          this.showBeat();
+          break;
+        }
         this.turn++;
         this.nextPicture();
         break;
@@ -292,33 +336,27 @@ export class DrawRoom extends Room {
     }
     this.broadcastView();
   }
-  private score() {
-    const gain = (id: string, n: number) => {
-      this.members.get(id)!.points += n;
-      this.gains[id] = (this.gains[id] ?? 0) + n;
-    };
-    for (const id of this.order) {
-      if (id === this.artist) continue;
-      const p = this.members.get(id)!;
-      const selected = this.choices.find((o) => o.id === this.votes.get(id));
-      if (selected?.truth) {
-        p.streak++;
-        p.guesses++;
-        gain(id, 1000 + 100 * (p.streak - 1));
-        gain(this.artist, 1000);
-      } else {
-        p.streak = 0;
-        if (selected) {
-          gain(selected.author, 500);
-          this.members.get(selected.author)!.fooled++;
-        }
+  private showBeat() {
+    const { frame, duration } = this.beats[this.beat];
+    this.startedAt = Date.now();
+    this.deadline =
+      this.startedAt + duration + (this.beat === 0 ? DRAW_INTRO : 0);
+    for (const award of frame.awards) {
+      const p = this.members.get(award.player)!;
+      p.points += award.amount;
+      if (award.reason === "fooled") p.fooled += frame.titles[0].voters.length;
+      if (award.reason === "guessed") p.guesses++;
+    }
+    if (frame.kind !== "suspense" && frame.kind !== "truth") {
+      for (const o of frame.titles)
+        this.members.get(o.author!)!.likes += o.likes;
+    }
+    if (frame.kind === "truth") {
+      const guessed = new Set(frame.titles[0].voters);
+      for (const [id, p] of this.members) {
+        if (id !== this.artist) p.streak = guessed.has(id) ? p.streak + 1 : 0;
       }
     }
-    for (const likes of this.hearts.values())
-      for (const option of this.choices) {
-        if (!option.truth && likes.has(option.id))
-          this.members.get(option.author)!.likes++;
-      }
   }
   private sendView(client: Client) {
     const you = client.sessionId;
@@ -330,6 +368,7 @@ export class DrawRoom extends Room {
       phase: this.phase,
       epoch: this.epoch,
       deadline: this.deadline,
+      startedAt: this.startedAt,
       now: Date.now(),
       turn: this.turn,
       total: this.order.length,
@@ -361,18 +400,7 @@ export class DrawRoom extends Room {
       v.choices = this.choices.map(publicOption);
       v.liked = [...(this.hearts.get(you) ?? [])];
     }
-    if (this.phase === "reveal") {
-      v.gains = this.gains;
-      v.reveal = this.choices.map((o) => ({
-        ...publicOption(o),
-        author: o.author,
-        truth: o.truth,
-        voters: [...this.votes]
-          .filter(([, choice]) => choice === o.id)
-          .map(([id]) => id),
-        likes: [...this.hearts.values()].filter((l) => l.has(o.id)).length,
-      }));
-    }
+    if (this.phase === "reveal") v.reveal = this.beats[this.beat].frame;
     client.send("view", v);
   }
   private broadcastView() {

@@ -1,11 +1,13 @@
 export const DRAW_ROOM = "risovach";
 export const DRAW_MIN = 3;
 export const DRAW_MAX = 12;
+export const DRAW_KICKED = 4005;
+export const DRAW_INTRO = 1250;
 export const DRAW_TIMES = {
   drawing: 120000,
-  captions: 40000,
+  captions: 30000,
   vote: 40000,
-  reveal: 7000,
+  reveal: 0,
 };
 export type Phase = "lobby" | keyof typeof DRAW_TIMES | "results";
 export interface DrawPlayer {
@@ -23,11 +25,24 @@ export interface Choice {
   text: string;
   mine: boolean;
 }
-export interface RevealedChoice extends Choice {
-  author: string;
-  truth: boolean;
+export interface RevealTitle {
+  text: string;
   voters: string[];
   likes: number;
+  author?: string;
+}
+export interface RevealAward {
+  player: string;
+  amount: number;
+  reason: "fooled" | "guessed" | "artist";
+  bonus?: number;
+}
+export interface RevealFrame {
+  step: number;
+  total: number;
+  kind: "empty" | "suspense" | "false" | "truth";
+  titles: RevealTitle[];
+  awards: RevealAward[];
 }
 export interface DrawView {
   phase: Phase;
@@ -49,6 +64,6 @@ export interface DrawView {
   artist?: string;
   choices?: Choice[];
   liked?: string[];
-  reveal?: RevealedChoice[];
-  gains?: Record<string, number>;
+  reveal?: RevealFrame;
+  startedAt: number;
 }

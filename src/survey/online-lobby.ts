@@ -1,3 +1,4 @@
+import { roomForm, roomHeading, roomFooter } from "../rooms/ui";
 import "./online-lobby.css";
 import type { Client, Room } from "colyseus.js";
 import {
@@ -94,24 +95,7 @@ export function createSurveyLobby(app: HTMLElement, onUpdate: () => void) {
     dialog.className = "survey-start-dialog survey-online-dialog";
     dialog.id = "survey-online-dialog";
     dialog.setAttribute("aria-labelledby", "survey-online-title");
-    dialog.innerHTML = `
-      <form class="survey-start-form" id="survey-online-form">
-        <h2 id="survey-online-title">Играть с друзьями</h2>
-        <div class="survey-online-modes" role="group" aria-label="Вход в комнату">
-          <button class="survey-button secondary-action" type="button" data-room-action="create">Новая комната</button>
-          <button class="survey-button secondary-action" type="button" data-room-action="join">Войти по коду</button>
-        </div>
-        <label>Ваше имя <input name="name" maxlength="24" required autocomplete="nickname"
-          value="${escape(readSession(NAME_KEY) ?? "")}" autofocus></label>
-        <label data-room-fields="join">Код комнаты <input name="code" maxlength="7" autocapitalize="characters" spellcheck="false"
-          pattern="[sS][0-9A-Fa-f]{6}" title="Семь символов, начиная с S" autocomplete="off" required
-          value="${escape(prefill?.slice(0, 7) ?? "")}" placeholder="S123ABC"></label>
-        <p class="survey-online-error" data-room-error role="status" hidden></p>
-        <div class="survey-dialog-actions">
-          <button class="survey-button secondary-action" type="button" data-room-action="close">Назад</button>
-          <button class="survey-button primary-action" type="submit"></button>
-        </div>
-      </form>`;
+    dialog.innerHTML = roomForm("S", readSession(NAME_KEY) ?? "", prefill ?? "");
     dialog.addEventListener("cancel", (event) => {
       event.preventDefault();
       close();
@@ -482,28 +466,14 @@ export function createSurveyLobby(app: HTMLElement, onUpdate: () => void) {
     }
 
     return `<main class="survey-wrap survey-online-lobby" aria-labelledby="survey-online-lobby-title">
-      <header class="survey-online-heading">
-        <div class="survey-online-overview">
-          <h1 id="survey-online-lobby-title" tabindex="-1">Комната ожидания</h1>
-          <p class="survey-muted" role="status">Подключились ${connected} из ${seats}</p>
-          <div class="survey-online-pack">
+${roomHeading(code, connected, seats, notice, `          <div class="survey-online-pack">
             <span class="survey-online-pack-label${activePack === "adult" ? " is-adult" : ""}">Набор <strong>${activePack === "adult" ? "18+" : "Классика"}</strong></span>
             ${isHost && view.questionPacks?.length ? `<button type="button" class="survey-button secondary-action"
               data-room-action="question-packs" aria-haspopup="dialog" ${canEdit ? "" : "disabled"}>Выбрать пак вопросов</button>` : ""}
           </div>
           ${unassigned.length ? `<ul class="survey-online-unassigned" aria-label="Игроки без команды" role="list">
             ${unassigned.map((member) => `<li>${memberMarkup(member)}</li>`).join("")}
-          </ul>` : ""}
-        </div>
-        <div class="survey-online-invites">
-          <label class="survey-online-code">Код комнаты <input aria-label="Код комнаты" value="${escape(code)}" readonly></label>
-          <div class="survey-online-copy">
-            <button class="survey-button secondary-action" type="button" data-room-action="copy-code">Скопировать код</button>
-            <button class="survey-button secondary-action" type="button" data-room-action="copy-link">Скопировать ссылку</button>
-          </div>
-          <p class="survey-muted" data-room-notice role="status">${escape(notice)}</p>
-        </div>
-      </header>
+          </ul>` : ""}`)}
       ${isHost && hasSeatSelection ? `<div class="survey-online-team-tools">
         <button class="survey-button secondary-action survey-online-shuffle" type="button"
           data-room-action="shuffle-teams" aria-label="Распределить случайно" ${canManage ? "" : "disabled"}>
@@ -537,13 +507,7 @@ export function createSurveyLobby(app: HTMLElement, onUpdate: () => void) {
       </div>
       ${isHost && roster.length < SURVEY_TEAM_COUNTS[1] ? `<button class="survey-button secondary-action survey-online-add-team"
         type="button" data-room-action="add-team" ${canEdit ? "" : "disabled"}>Добавить команду</button>` : ""}
-      <footer class="survey-online-footer">
-        <p class="survey-muted">${startMessage}</p>
-        <div class="survey-dialog-actions">
-          ${room || pending ? '<button class="survey-button secondary-action" type="button" data-room-action="leave">Выйти из комнаты</button>' : ""}
-          ${isHost ? `<button class="survey-button primary-action" type="button" data-room-action="start" ${canStart && room && !pending ? "" : "disabled"}>Начать игру</button>` : ""}
-        </div>
-      </footer>
+${roomFooter(startMessage, isHost, Boolean(canStart && room && !pending), Boolean(room || pending))}
       ${connectionMarkup()}
     </main>`;
   }

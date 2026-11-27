@@ -1,21 +1,24 @@
 import { Client, type Room } from "colyseus.js";
 import {
-  DRAW_MAX,
-  DRAW_MIN,
+  DRAW_INTRO,
+  DRAW_TIMES,
+  DRAW_KICKED,
   DRAW_ROOM,
   type DrawView,
 } from "../../shared/draw";
 import { mountCanvas } from "./canvas";
+import { escape as esc } from "../rooms/ui";
+import { openDrawForm, lobbyMarkup } from "./rooms";
+import { mountReveal } from "./reveal";
+import logo from "../home-art/logo.webp";
+import "../base.css";
+import "../survey/demo.css";
+import "../survey/online-lobby.css";
+import "../survey/textile.css";
+import "../survey/landing-textile.css";
+import "../survey/lobby-textile.css";
 import "./style.css";
 
-const esc = (s: string) =>
-  s.replace(
-    /[&<>"']/g,
-    (c) =>
-      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[
-        c
-      ]!,
-  );
 const hostUrl =
   import.meta.env.VITE_SERVER_URL ||
   (location.hostname.endsWith(".chatgpt.site")
@@ -57,10 +60,17 @@ export function mountDraw(app: HTMLElement) {
     new URL(location.href).searchParams.get("room") ?? ""
   ).toUpperCase();
   const sdk = new Client(http);
-  app.innerHTML = `<main class="risovach"><header><a href="./" class="draw-brand" aria-label="К выбору игр">И.Г.Р.Ы.</a><span>Рисовач</span><button data-exit hidden>Выйти</button></header>
-    <div class="draw-notice" role="status"></div><section class="draw-stage"></section></main>`;
+  app.classList.add("survey-app", "draw-app");
+  app.innerHTML = `<header class="survey-header"><a href="./" class="survey-brand"><img src="${logo}" alt="И.Г.Р.Ы." width="550" height="204"></a>
+    <span data-title hidden>Рисовач</span><button class="survey-button secondary-action draw-exit" data-exit hidden>Выйти</button><a data-all href="./">Все игры</a></header>
+    <div class="draw-notice" role="status"></div><div class="draw-stage"></div><div class="draw-curtain" aria-hidden="true" hidden></div>`;
   const stage = app.querySelector<HTMLElement>(".draw-stage")!;
   const exit = app.querySelector<HTMLButtonElement>("[data-exit]")!;
+  const curtain = app.querySelector<HTMLElement>(".draw-curtain")!;
+  let curtainTimer: ReturnType<typeof setTimeout>;
+  let shownStage = "";
+  let removing = "";
+  let updateReveal: ((v: DrawView) => void) | undefined;
   const notify = (s: string) => {
     app.querySelector(".draw-notice")!.textContent = s;
   };
@@ -68,44 +78,65 @@ export function mountDraw(app: HTMLElement) {
     esc(view?.players.find((p) => p.id === id)?.name ?? "Игрок");
   const act = (type: string, extra: Record<string, unknown> = {}) =>
     socket?.send("play", { epoch: view?.epoch, type, ...extra });
-  function entrance(join = Boolean(invited)) {
+  function entrance() {
     pageKey = "";
+    shownStage = "";
+    app.classList.add("is-landing");
+    app.querySelector<HTMLElement>("[data-title]")!.hidden = true;
+    app.querySelector<HTMLElement>("[data-all]")!.hidden = false;
     exit.hidden = true;
-    stage.innerHTML = `<div class="draw-intro"><div class="draw-hero-art" aria-hidden="true"></div>
-      <div class="draw-panel"><h1>Рисовач</h1><p>Нарисуй свою фразу. Придумай подпись к чужому рисунку и попробуй угадать настоящую.</p>
-      <div class="draw-tabs"><button data-mode="create" aria-pressed="${!join}">Создать комнату</button><button data-mode="join" aria-pressed="${join}">Присоединиться</button></div>
-      <form><label>Твоё имя<input name="name" autocomplete="nickname" maxlength="24" required value="${esc(read(nameKey))}"></label>
-      ${join ? `<label>Код комнаты<input name="code" maxlength="7" pattern="[Rr][0-9a-fA-F]{6}" placeholder="R…" required value="${esc(invited)}"></label>` : ""}
-      <button class="primary">${join ? "Войти" : "Создать"}</button></form></div></div>`;
-    stage.querySelectorAll<HTMLButtonElement>("[data-mode]").forEach(
-      (b) =>
-        (b.onclick = () => {
-          write(
-            nameKey,
-            stage.querySelector<HTMLInputElement>("[name=name]")!.value,
-          );
-          entrance(b.dataset.mode === "join");
-        }),
-    );
-    const form = stage.querySelector("form")!;
-    form.onsubmit = (e) => {
-      e.preventDefault();
-      const data = new FormData(form);
-      const name = String(data.get("name")).trim();
-      if (!name) return;
+    stage.className = "draw-stage";
+    curtain.hidden = true;
+    stage.innerHTML = `<main class="survey-wrap survey-setup"><section class="survey-intro">
+      <h1>Рисовач</h1><p class="survey-player-range">3–12 игроков</p>
+      <p class="survey-lead">Нарисуй свою фразу. Угадай, что рисовали друзья.</p>
+      <div class="survey-start"><button class="survey-button primary-action" data-play>Играть</button>
+      <button class="survey-button secondary-action" disabled title="Демо пока недоступно">Демо</button></div></section>
+      <div class="draw-art-patch" role="img" aria-label="Птичка, нарисованная синей ручкой на ткани"></div></main>`;
+    stage.querySelector<HTMLButtonElement>("[data-play]")!.onclick = () =>
+      openForm("");
+  }
+  function openForm(code: string) {
+    openDrawForm(app, read(nameKey), code, async (name, code) => {
       write(nameKey, name);
-      const code = String(data.get("code") ?? "")
-        .trim()
-        .toUpperCase();
-      void connect(
+      await connect(
         () =>
-          join ? sdk.joinById(code, { name }) : sdk.create(DRAW_ROOM, { name }),
+          code ? sdk.joinById(code, { name }) : sdk.create(DRAW_ROOM, { name }),
         false,
       );
+    });
+  }
+  function showStage(v: DrawView) {
+    const k = v.code + "." + v.epoch;
+    if (k === shownStage) return;
+    shownStage = k;
+    clearTimeout(curtainTimer);
+    curtain.hidden = true;
+    if (
+      v.phase === "lobby" ||
+      (v.phase === "reveal" &&
+        (v.reveal!.step !== 0 || v.reveal!.kind === "false"))
+    )
+      return;
+    const age = Math.max(0, v.now - v.startedAt);
+    if (age >= DRAW_INTRO) return;
+    const names = {
+      drawing: "Время рисовать!",
+      captions: "Придумайте подпись",
+      vote: "Голосование",
+      reveal: "Подсчёт итогов",
+      results: "Итоги партии",
     };
+    curtain.textContent = names[v.phase];
+    curtain.hidden = false;
+    curtain.style.animation = "none";
+    void curtain.offsetWidth;
+    curtain.style.animation = "";
+    curtain.style.animationDelay = "-" + age + "ms";
+    curtainTimer = setTimeout(() => (curtain.hidden = true), DRAW_INTRO - age);
   }
   async function connect(open: () => Promise<Room>, resuming: boolean) {
-    if (connecting) return;
+    if (connecting) throw Error("Уже подключаемся к комнате.");
     connecting = true;
     notify(resuming ? "Возвращаемся в комнату…" : "Подключаемся…");
     try {
@@ -128,14 +159,31 @@ export function mountDraw(app: HTMLElement) {
         render(v);
       });
       room.onMessage<string>("problem", notify);
-      room.onLeave(() => {
+      room.onLeave((code) => {
         if (socket !== room || voluntary) return;
         socket = undefined;
+        if (code === DRAW_KICKED) {
+          clearTimeout(reconnectTimer);
+          write(storage, "");
+          view = undefined;
+          history.replaceState(null, "", "?game=draw");
+          entrance();
+          notify("Ведущий исключил вас из комнаты.");
+          return;
+        }
         notify("Соединение прервалось. Возвращаемся в комнату…");
         scheduleReconnect();
       });
       room.send("sync");
-    } catch {
+    } catch (error) {
+      if (!resuming) {
+        notify("");
+        throw Error(
+          error instanceof Error && /locked|full/i.test(error.message)
+            ? "Комната заполнена или игра уже началась."
+            : "Не удалось войти. Проверьте код комнаты и подключение.",
+        );
+      }
       if (resuming && retry < 5) {
         scheduleReconnect();
         return;
@@ -181,7 +229,13 @@ export function mountDraw(app: HTMLElement) {
       : '<div class="draw-picture blank">Холст остался пустым</div>';
   }
   function render(v: DrawView) {
-    exit.hidden = false;
+    app.classList.remove("is-landing");
+    app.querySelector<HTMLElement>("[data-title]")!.hidden = false;
+    app.querySelector<HTMLElement>("[data-all]")!.hidden = true;
+    exit.hidden = v.phase === "lobby";
+    stage.className =
+      v.phase === "lobby" ? "draw-stage" : "draw-stage risovach";
+    showStage(v);
     const key = [
       v.code,
       v.epoch,
@@ -193,17 +247,51 @@ export function mountDraw(app: HTMLElement) {
       drawer = undefined;
       selection = "";
       pageKey = key;
+      stage.onclick = null;
+      updateReveal = undefined;
       if (v.phase === "lobby") {
-        stage.innerHTML = `<div class="draw-panel lobby"><h1>Комната ожидания</h1><button class="draw-code" title="Скопировать код" data-copy>${esc(v.code)} <small>Копировать</small></button>
-        <p>Игроки · ${v.players.filter((p) => p.connected).length} из ${DRAW_MAX}</p><ul class="roster">${v.players.map((p) => `<li>${who(p.id)} ${p.id === v.host ? "<small>ведущий</small>" : ""}${p.connected ? "" : " · вне сети"}</li>`).join("")}</ul>
-        ${v.you === v.host ? `<button class="primary" data-start ${v.players.filter((p) => p.connected).length < DRAW_MIN ? "disabled" : ""}>Начать игру</button><small>От 3 до 12 игроков</small>` : "<p>Ведущий начнёт игру.</p>"}</div>`;
-        stage.querySelector<HTMLButtonElement>("[data-copy]")!.onclick = () =>
-          void navigator.clipboard.writeText(v.code).then(
-            () => notify("Код скопирован."),
-            () => notify("Код комнаты " + v.code),
+        stage.innerHTML = lobbyMarkup(v, removing);
+        stage.onclick = async (event) => {
+          const b = (event.target as HTMLElement).closest<HTMLButtonElement>(
+            "button",
           );
-        const start = stage.querySelector<HTMLButtonElement>("[data-start]");
-        if (start) start.onclick = () => act("start");
+          if (!b) return;
+          if (b.hasAttribute("data-manage") || b.hasAttribute("data-cancel")) {
+            removing = b.dataset.manage ?? "";
+            render(v);
+            return;
+          }
+          if (b.dataset.kick) {
+            removing = "";
+            act("kick", { member: b.dataset.kick });
+            return;
+          }
+          switch (b.dataset.roomAction) {
+            case "start":
+              act("start");
+              break;
+            case "leave":
+              exit.click();
+              break;
+            case "copy-code":
+            case "copy-link": {
+              const value =
+                b.dataset.roomAction === "copy-code" ? v.code : location.href;
+              try {
+                await navigator.clipboard.writeText(value);
+                stage.querySelector("[data-room-notice]")!.textContent =
+                  "Скопировано.";
+              } catch {
+                const field = stage.querySelector<HTMLInputElement>(
+                  ".survey-online-code input",
+                )!;
+                field.value = value;
+                field.select();
+              }
+              break;
+            }
+          }
+        };
       } else if (v.phase === "drawing") {
         stage.innerHTML =
           bar(v, "Рисование") +
@@ -215,13 +303,12 @@ export function mountDraw(app: HTMLElement) {
             () => act("ready"),
             notify,
           );
-      } else if (
-        v.phase === "captions" ||
-        v.phase === "vote" ||
-        v.phase === "reveal"
-      ) {
+      } else if (v.phase === "captions" || v.phase === "vote") {
         stage.innerHTML =
-          bar(v, `Рисунок ${v.turn + 1} из ${v.total}`) +
+          bar(
+            v,
+            `${v.phase === "vote" ? "Голосование" : "Подписи"} · Рисунок ${v.turn + 1} из ${v.total}`,
+          ) +
           `<div class="draw-spread"><div class="draw-sheet">${picture(v)}</div><div class="draw-panel responses"></div></div>`;
         const panel = stage.querySelector(".responses")!;
         if (v.phase === "captions") {
@@ -235,19 +322,9 @@ export function mountDraw(app: HTMLElement) {
             };
         } else if (v.phase === "vote") {
           panel.innerHTML = `<h1>${v.you === v.artist ? "Подписи к твоему рисунку" : "Какая фраза была задана?"}</h1><p>${v.you === v.artist ? "Отметь понравившиеся подписи сердцем." : "Выбери ответ. Сердцем можно отдельно отметить смешные версии."}</p><div class="draw-options"></div>${v.you !== v.artist ? '<button class="primary" data-vote disabled>Проголосовать</button>' : ""}`;
-        } else {
-          const truth = v.reveal!.find((o) => o.truth)!;
-          panel.innerHTML = `<small>Исходная фраза · ${who(truth.author)}</small><h1>${esc(truth.text)}</h1>
-          <p>Угадали: ${truth.voters.length ? truth.voters.map(who).join(", ") : "никто"}</p>
-          <ul class="reveal-list">${v
-            .reveal!.filter((o) => !o.truth)
-            .map(
-              (o) =>
-                `<li><strong>${esc(o.text)}</strong> · ${who(o.author)}<small>${o.voters.length ? "Поверили: " + o.voters.map(who).join(", ") : "0 голосов"} · ♥ ${o.likes}</small></li>`,
-            )
-            .join("")}</ul>
-          <b>Твои очки за рисунок: +${v.gains?.[v.you] ?? 0}</b>`;
         }
+      } else if (v.phase === "reveal") {
+        updateReveal = mountReveal(stage, v, picture(v));
       } else if (v.phase === "results") {
         const ranked = [...v.players].sort((a, b) => b.points - a.points);
         const award = (prop: "likes" | "guesses" | "fooled", title: string) => {
@@ -265,6 +342,7 @@ export function mountDraw(app: HTMLElement) {
           ?.addEventListener("click", () => act("again"));
       }
     }
+    if (v.phase === "reveal") updateReveal?.(v);
     if (v.phase === "vote") {
       const choices = stage.querySelector(".draw-options")!;
       if (!choices.childElementCount) {
@@ -311,10 +389,16 @@ export function mountDraw(app: HTMLElement) {
   }
   function tick() {
     if (!view?.deadline) return;
-    const left = Math.max(
+    const remaining = Math.max(
       0,
       Math.ceil((view.deadline - Date.now() - clockOffset) / 1000),
     );
+    const left =
+      view.phase === "drawing" ||
+      view.phase === "captions" ||
+      view.phase === "vote"
+        ? Math.min(remaining, DRAW_TIMES[view.phase] / 1000)
+        : remaining;
     const timer = stage.querySelector(".draw-clock");
     if (timer)
       timer.textContent =
@@ -327,6 +411,7 @@ export function mountDraw(app: HTMLElement) {
     const saved = JSON.parse(read(storage) || "null");
     if (saved && (!invited || saved.code === invited))
       void connect(() => sdk.reconnect(saved.token), true);
+    else if (invited) openForm(invited);
   } catch {
     write(storage, "");
   }
