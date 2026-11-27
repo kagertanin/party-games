@@ -1,16 +1,25 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { randomBytes } from "node:crypto";
+import { PNG } from "pngjs";
 
 const images = new Map<string, Buffer>();
 const writers = new Map<
   string,
-  { image: string; revision: number; active: () => boolean }
+  { image: string; revision: number; active: () => boolean; avatar: boolean }
 >();
 const limit = 1400000;
-export function pictureSlot(active: () => boolean) {
+export function pictureSlot(
+  active: () => boolean,
+  purpose: "drawing" | "avatar" = "drawing",
+) {
   const image = randomBytes(18).toString("hex");
   const upload = randomBytes(24).toString("hex");
-  writers.set(upload, { image, active, revision: -1 });
+  writers.set(upload, {
+    image,
+    active,
+    revision: -1,
+    avatar: purpose === "avatar",
+  });
   return {
     upload: "/draw-upload/" + upload,
     url: "/draw-picture/" + image,
@@ -83,6 +92,33 @@ export async function drawImageRequest(
     data.toString("ascii", data.length - 8, data.length - 4) !== "IEND"
   )
     return finish(400);
+  if (writer.avatar) {
+    // Browser canvases export a single non-interlaced header. Keep the
+    // decoder's allocation bound to the validated 640 × 480 dimensions.
+    if (data.readUInt32BE(8) !== 13 || data[28] !== 0) return finish(400);
+    let offset = 33;
+    while (offset + 12 <= data.length) {
+      if (data.toString("ascii", offset + 4, offset + 8) === "IHDR")
+        return finish(400);
+      offset += 12 + data.readUInt32BE(offset);
+    }
+    if (offset !== data.length) return finish(400);
+    // The editor exports a transparent PNG. Undoing or erasing everything must
+    // not make an empty portrait count as a ready player.
+    try {
+      const pixels = PNG.sync.read(data).data;
+      let hasInk = false;
+      for (let alpha = 3; alpha < pixels.length; alpha += 4) {
+        if (pixels[alpha] > 0) {
+          hasInk = true;
+          break;
+        }
+      }
+      if (!hasInk) return finish(422);
+    } catch {
+      return finish(400);
+    }
+  }
   if (!writer.active() || writers.get(key) !== writer) return finish(409);
   if (rev >= writer.revision) {
     images.set(writer.image, data);

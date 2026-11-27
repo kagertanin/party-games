@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { drawIntro, DRAW_TIMES } from "../shared/draw";
+import { prepareReveal, revealedBefore } from "../shared/draw-reveal";
 import { DrawDemo } from "../src/draw/demo";
 import { demoExamples } from "../src/draw/demo-examples";
 
@@ -36,7 +37,7 @@ test("solo player draws, captions, likes and votes without waiting for other pla
   game.act("vote", { choice: truth.id });
   assert.equal(game.phase, "reveal");
   while (game.snapshot().reveal?.kind !== "favorites") game.next();
-  assert.equal(game.deadline - game.snapshot().startedAt, 10000);
+  assert.equal(game.deadline - game.snapshot().startedAt, 20000);
   const before = game.snapshot().heartCounts?.[truth.id] ?? 0;
   for (const likes of [true, true, false, true])
     game.act("like", { choice: truth.id, likes });
@@ -121,9 +122,9 @@ test("jumping to the finale settles every award once from every stage, including
   }
 });
 
-test("the drawing clock has a full two minutes after the five-second title and its fades", () => {
+test("the drawing clock has a full two minutes after the shortened title", () => {
   const drawing = new DrawDemo().snapshot();
-  assert.equal(drawIntro("drawing"), 8000);
+  assert.equal(drawIntro("drawing"), 4000);
   assert.equal(
     drawing.deadline - drawing.startedAt - drawIntro("drawing"),
     DRAW_TIMES.drawing,
@@ -151,6 +152,7 @@ test("a popular bluff closes the cumulative board and no future answer leaks", (
   assert.equal(game.snapshot().reveal!.kind, "opening");
   const steps: number[] = [];
   const scores: number[] = [];
+  const visible = new Map<number, string[]>();
   while (game.phase === "reveal") {
     const { reveal, revealed } = game.snapshot();
     const f = reveal!;
@@ -165,7 +167,15 @@ test("a popular bluff closes the cumulative board and no future answer leaks", (
         revealed!.map((r) => r.step),
         steps,
       );
-      steps.push(f.step);
+      const previousVoters = visible.get(f.step);
+      if (previousVoters) {
+        assert.equal(f.titles[0].voters.length, previousVoters.length + 1);
+        assert.deepEqual(f.titles[0].voters.slice(0, -1), previousVoters);
+      } else {
+        assert.deepEqual(f.titles[0].voters, []);
+        steps.push(f.step);
+      }
+      visible.set(f.step, f.titles[0].voters);
     }
     if (f.kind === "truth" || f.kind === "false") {
       assert.equal(steps.length, 4);
@@ -189,4 +199,25 @@ test("a popular bluff closes the cumulative board and no future answer leaks", (
   }
   assert.deepEqual(steps, [0, 1, 2, 3]);
   assert.deepEqual(scores, steps);
+});
+
+test("even eleven votes arrive one per second, with no future names in the public board", () => {
+  const voters = Array.from({ length: 11 }, (_, i) => "voter-" + i);
+  const beats = prepareReveal(
+    [{ id: "bluff", text: "Комета", author: "author", truth: false }],
+    new Map(voters.map((id) => [id, "bluff"])),
+    new Map(),
+  );
+  const ballots = beats.filter(({ frame }) => frame.kind === "ballots");
+  assert.equal(ballots.length, 12);
+  for (const [index, beat] of ballots.entries()) {
+    assert.deepEqual(beat.frame.titles[0].voters, voters.slice(0, index));
+    assert.equal(beat.frame.titles[0].author, undefined);
+    assert.equal(beat.duration, 1000);
+    const previous = revealedBefore(beats, beats.indexOf(beat));
+    assert.deepEqual(
+      previous[0]?.titles[0].voters ?? [],
+      voters.slice(0, Math.max(0, index - 1)),
+    );
+  }
 });

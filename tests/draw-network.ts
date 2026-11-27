@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { setTimeout as wait } from "node:timers/promises";
 import { Client, type Room } from "colyseus.js";
+import { PNG } from "pngjs";
 import { DRAW_ROOM, type DrawView } from "../shared/draw";
 
 const endpoint = process.env.TEST_SERVER_URL || "http://localhost:2567";
@@ -16,7 +17,7 @@ function watch(room: Room) {
   room.send("sync");
   return room;
 }
-async function until(check: () => boolean, label: string, limit = 18000) {
+async function until(check: () => boolean, label: string, limit = 36000) {
   const end = Date.now() + limit;
   while (!check()) {
     if (Date.now() > end) throw Error(label + ": " + failures.join(", "));
@@ -69,13 +70,63 @@ try {
     () => rooms.every((r) => view(r)?.players.length === 12),
     "lobby",
   );
+  const png = await readFile(
+    new URL("./fixtures/drawn-stroke.png", import.meta.url),
+  );
+  function upload(path: string, data: Buffer) {
+    return fetch(endpoint + path + "?v=1", {
+      method: "POST",
+      headers: { "Content-Type": "image/png" },
+      body: new Uint8Array(data),
+    });
+  }
+  const avatarSlots = rooms.map((r) => view(r).avatarUpload!);
+  assert.ok(avatarSlots.every(Boolean));
+  assert.equal(new Set(avatarSlots).size, 12);
+  assert.ok(rooms.every((r) => view(r).players.every((p) => !p.avatar)));
+  const empty = PNG.sync.write(new PNG({ width: 640, height: 480 }));
+  assert.equal((await upload(avatarSlots[0], empty)).status, 422);
+  act(rooms[0], "avatar");
+  await until(() => failures.length === 1, "reject empty avatar");
+  assert.match(failures.pop()!, /аватарку/);
+  await Promise.all(
+    avatarSlots.map(async (slot) =>
+      assert.equal((await upload(slot, png)).status, 204),
+    ),
+  );
+  await reconnect(11);
+  await until(
+    () => Boolean(view(rooms[11])?.avatarUpload),
+    "avatar editor reconnect",
+  );
+  assert.equal(view(rooms[11]).avatarUpload, avatarSlots[11]);
+  for (const r of rooms.slice(0, -1)) act(r, "avatar");
+  await until(
+    () =>
+      rooms.every((r) => view(r).players.filter((p) => p.avatar).length === 11),
+    "unconfirmed draft stays private",
+  );
+  act(rooms[0], "start");
+  await until(() => failures.length === 1, "no start before last avatar");
+  assert.match(failures.pop()!, /аватарки/);
+  assert.ok(allAt("lobby"));
+  act(rooms[11], "avatar");
+  await until(
+    () => rooms.every((r) => view(r).players.every((p) => p.avatar)),
+    "all ready",
+  );
+  const portraits = view(rooms[0]).players.map((p) => p.avatar!);
+  assert.equal(new Set(portraits).size, 12);
+  assert.deepEqual(
+    Buffer.from(await (await fetch(endpoint + portraits[11])).arrayBuffer()),
+    png,
+  );
+  assert.equal((await upload(avatarSlots[0], png)).status, 409);
+  assert.ok(rooms.every((r) => !view(r).avatarUpload));
   act(rooms[0], "start");
   await until(() => allAt("drawing"), "drawing");
   const prompts = new Map(rooms.map((r) => [r.sessionId, view(r).prompt!]));
   assert.equal(new Set(prompts.values()).size, 12);
-  const png = await readFile(
-    new URL("./fixtures/drawn-stroke.png", import.meta.url),
-  );
   await Promise.all(
     rooms.map(async (r) => {
       const uploaded = await fetch(endpoint + view(r).upload + "?v=1", {
@@ -155,7 +206,7 @@ try {
     await until(
       () => rooms.every((r) => view(r).reveal?.kind === "tally"),
       "all votes displayed",
-      65000,
+      85000,
     );
     const board = view(rooms[0]).revealed!;
     assert.equal(board.length, 12);
@@ -196,8 +247,12 @@ try {
   assert.deepEqual(failures, []);
   act(rooms[0], "again");
   await until(() => allAt("lobby"), "rematch");
+  assert.deepEqual(
+    view(rooms[0]).players.map((p) => p.avatar),
+    portraits,
+  );
   console.log(
-    "12 players, 12 drawings, 132 captions and votes, images, reconnection, all scores and rematch verified.",
+    "12 ready portraits, 12 players, 12 drawings, 132 captions and votes, images, reconnection, all scores and rematch verified.",
   );
 } finally {
   await Promise.allSettled(rooms.map((r) => r.leave()));

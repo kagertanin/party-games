@@ -1,0 +1,165 @@
+.portrait-workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(15rem, 0.9fr);
+  align-items: start;
+  gap: clamp(1rem, 3vw, 2.2rem);
+}
+.portrait-workspace:has(> [hidden]) {
+  grid-template-columns: minmax(0, 1fr);
+}
+.portrait-studio.risovach {
+  width: min(100%, 42rem);
+  margin: 0 auto;
+  padding: clamp(0.7rem, 2vw, 1.25rem);
+  background:
+    var(--fabric-weave) center / 84px,
+    #f0eafa;
+  border: 2px solid transparent;
+  border-image: var(--fabric-edge) 26 / 10px / 3px round;
+  text-align: center;
+}
+.portrait-studio h2,
+.portrait-gallery h2 {
+  margin: 0 0 0.65rem;
+  font: italic 770 clamp(1.45rem, 2.45vw, 2.1rem) / 1.12 var(--survey-display);
+  letter-spacing: -0.04em;
+}
+.portrait-studio .draw-tools {
+  margin: 0.7rem 0;
+}
+.portrait-studio button[data-finish] {
+  min-width: 9rem;
+}
+.portrait-gallery {
+  min-width: 0;
+  padding: clamp(1rem, 2.2vw, 1.75rem);
+  background:
+    var(--fabric-weave) center / 86px,
+    #e8e7f4;
+  border: 2px solid transparent;
+  border-image: var(--fabric-edge) 26 / 11px / 4px round;
+}
+.portrait-wall {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 7.25rem), 1fr));
+  align-items: start;
+  gap: 1.2rem clamp(0.45rem, 2vw, 1.4rem);
+  list-style: none;
+  margin: 0;
+  padding: 0.35rem 0 0.6rem;
+}
+.portrait-wall > li {
+  --tilt: -4deg;
+  position: relative;
+  justify-self: center;
+  width: min(100%, 9.2rem);
+  min-width: 0;
+  padding-inline: 0.4rem;
+}
+.portrait-wall > li:nth-child(3n + 2) {
+  --tilt: 5deg;
+  margin-top: 1.4rem;
+}
+.portrait-wall > li:nth-child(3n) {
+  --tilt: -2deg;
+  margin-top: 0.65rem;
+}
+.portrait-wall > li:nth-child(5n) {
+  --tilt: 3deg;
+  margin-top: 0.25rem;
+}
+.portrait-wall figure {
+  margin: 0;
+  text-align: center;
+}
+.draw-avatar {
+  display: inline-block;
+  object-fit: contain;
+}
+.portrait-wall .draw-avatar {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 4 / 3;
+  transform: rotate(var(--tilt));
+}
+.portrait-wall figcaption {
+  margin-top: 0.2rem;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+.portrait-wall strong {
+  font: italic 740 1.2rem / 1.15 var(--survey-display);
+}
+.portrait-wall small {
+  display: block;
+  margin-top: 0.16rem;
+  color: var(--fabric-muted);
+  font-size: 0.8rem;
+}
+.portrait-manage,
+.portrait-actions button {
+  color: #75434e;
+  border: 1px dashed #c5a9bc;
+  border-radius: 0.55rem;
+  background: #fffaf0;
+  font: inherit;
+  cursor: pointer;
+}
+.portrait-manage {
+  min-width: 1.85rem;
+  min-height: 1.85rem;
+  line-height: 1;
+}
+.portrait-wall .portrait-manage {
+  position: absolute;
+  top: 0;
+  right: 0;
+}
+.portrait-wall .portrait-manage:not(:focus-visible) {
+  opacity: 0.7;
+}
+.portrait-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.25rem;
+  margin-top: 0.3rem;
+  font-size: 0.85rem;
+}
+.portrait-actions button {
+  padding: 0.28rem 0.4rem;
+}
+.portrait-pending:empty {
+  display: none;
+}
+.portrait-pending p {
+  font-weight: 650;
+  margin: 0.7rem 0 0.45rem;
+}
+.portrait-pending ul {
+  display: flex;
+  flex-wrap: wrap;
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  gap: 0.4rem 0.85rem;
+}
+.portrait-pending li {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 700px) {
+  .portrait-workspace {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .portrait-studio .draw-tools {
+    gap: 0.4rem;
+  }
+  .portrait-studio .draw-tools input[type="range"] {
+    width: 4.5rem;
+  }
+}

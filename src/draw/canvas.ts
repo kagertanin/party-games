@@ -32,7 +32,7 @@ export function paintStrokes(ctx: CanvasRenderingContext2D, strokes: Stroke[]) {
 }
 export function mountCanvas(
   root: HTMLElement,
-  target: string | { strokes: Stroke[] },
+  target: string | { strokes: Stroke[] } | { avatarUpload: string },
   complete: () => void,
   problem: (s: string) => void,
 ) {
@@ -81,9 +81,12 @@ export function mountCanvas(
   const observer = new ResizeObserver(updateTip);
   observer.observe(canvas);
   width.oninput = updateTip;
-  const key =
-    typeof target === "string" ? "draw.draft." + target.split("/").pop() : null;
-  let strokes: Stroke[] = typeof target === "string" ? [] : target.strokes;
+  const avatar = typeof target === "object" && "avatarUpload" in target;
+  const url =
+    typeof target === "string" ? target : avatar ? target.avatarUpload : "";
+  const key = url ? "draw.draft." + url.split("/").pop() : "";
+  let strokes: Stroke[] =
+    typeof target === "object" && "strokes" in target ? target.strokes : [];
   try {
     if (key) strokes = JSON.parse(sessionStorage.getItem(key) ?? "[]");
   } catch {
@@ -99,12 +102,13 @@ export function mountCanvas(
     ctx.clearRect(0, 0, 640, 480);
     paintStrokes(ctx, strokes);
     undo.disabled = strokes.length === 0;
+    if (avatar) finish.disabled = !strokes.length;
   }
   function saveDraft() {
     try {
       if (key) sessionStorage.setItem(key, JSON.stringify(strokes));
     } catch {
-      /* Server also receives snapshots. */
+      /* The in-memory drawing is still available. */
     }
   }
   function point(e: PointerEvent): Point {
@@ -135,6 +139,7 @@ export function mountCanvas(
     draw(ctx, s, p, p);
     revision++;
     undo.disabled = false;
+    if (avatar) finish.disabled = false;
   };
   canvas.onpointermove = (e) => {
     preview(e);
@@ -180,8 +185,7 @@ export function mountCanvas(
     }
   };
   async function flush() {
-    if (typeof target !== "string" || busy || ended || sent === revision)
-      return;
+    if (!url || busy || ended || sent === revision) return;
     busy = true;
     const version = revision;
     try {
@@ -189,7 +193,7 @@ export function mountCanvas(
         canvas.toBlob(resolve, "image/png"),
       );
       if (!blob) throw Error();
-      const response = await fetch(target + "?v=" + version, {
+      const response = await fetch(url + "?v=" + version, {
         method: "POST",
         body: blob,
         signal: AbortSignal.timeout(8000),
@@ -197,8 +201,14 @@ export function mountCanvas(
       if (!response.ok) throw Error();
       sent = version;
     } catch {
-      if (!ended)
+      if (!ended && avatar) {
+        resume();
+        problem(
+          "Не удалось отправить аватарку. Нажми «Готово», чтобы повторить.",
+        );
+      } else if (!ended) {
         problem("Рисунок сохранён на устройстве. Повторяем отправку.");
+      }
     } finally {
       busy = false;
     }
@@ -207,8 +217,20 @@ export function mountCanvas(
       else if (sent === version) void flush();
     }
   }
+  function resume() {
+    closing = false;
+    finish.disabled = avatar && !strokes.length;
+    finish.textContent = "Готово";
+  }
   function submit() {
     if (ended || closing) return;
+    if (avatar) {
+      const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+      if (!pixels.some((value, index) => index % 4 === 3 && value > 0)) {
+        problem("Нарисуй аватарку и нажми «Готово».");
+        return;
+      }
+    }
     closing = true;
     finish.disabled = true;
     finish.textContent = "Отправляем…";
@@ -219,14 +241,16 @@ export function mountCanvas(
   repaint();
   finish.onclick = submit;
   window.addEventListener("keydown", keydown);
-  const timer = key && setInterval(() => void flush(), 10000);
+  const timer = url && !avatar && setInterval(() => void flush(), 10000);
   const retryFinal =
-    key &&
+    url &&
+    !avatar &&
     setInterval(() => {
       if (closing) void flush();
     }, 800);
   return {
     submit,
+    resume,
     dispose(clear: boolean) {
       ended = true;
       observer.disconnect();

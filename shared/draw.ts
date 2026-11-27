@@ -4,7 +4,7 @@ export const DRAW_MAX = 12;
 export const DRAW_KICKED = 4005;
 // Includes fading out the previous screen, lettering in, the hold and lettering out.
 export function drawIntro(phase: Phase) {
-  return phase === "drawing" ? 8000 : phase === "lobby" ? 0 : 2700;
+  return phase === "drawing" ? 4000 : phase === "lobby" ? 0 : 2700;
 }
 export const DRAW_TIMES = {
   drawing: 120000,
@@ -17,6 +17,7 @@ export interface DrawPlayer {
   id: string;
   name: string;
   connected: boolean;
+  avatar?: string;
   points: number;
   guesses: number;
   fooled: number;
@@ -64,6 +65,7 @@ export interface DrawView {
   done: boolean;
   prompt?: string;
   upload?: string;
+  avatarUpload?: string;
   picture?: string;
   artist?: string;
   choices?: Choice[];

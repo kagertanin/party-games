@@ -42,6 +42,7 @@ export class DrawRoom extends Room {
     ReturnType<DrawRoom["allowReconnection"]>
   >();
   private pictures = new Map<string, Picture>();
+  private avatars = new Map<string, ReturnType<typeof pictureSlot>>();
   private order: string[] = [];
   private turn = 0;
   private submitted = new Set<string>();
@@ -96,6 +97,16 @@ export class DrawRoom extends Room {
       likes: 0,
       streak: 0,
     });
+    this.avatars.set(
+      id,
+      pictureSlot(
+        () =>
+          this.phase === "lobby" &&
+          this.members.get(id)?.connected === true &&
+          !this.members.get(id)?.avatar,
+        "avatar",
+      ),
+    );
     this.host ||= id;
     this.broadcastView();
   }
@@ -125,11 +136,17 @@ export class DrawRoom extends Room {
         this.reconnecting.delete(p.id);
       }
     }
-    if (this.phase === "lobby") this.members.delete(p.id);
+    if (this.phase === "lobby") this.removeMember(p.id);
     this.broadcastView();
   }
   onDispose() {
     this.clearPictures();
+    for (const slot of this.avatars.values()) slot.dispose();
+  }
+  private removeMember(id: string) {
+    this.members.delete(id);
+    this.avatars.get(id)?.dispose();
+    this.avatars.delete(id);
   }
   private clearPictures() {
     for (const p of this.pictures.values()) p.slot.dispose();
@@ -147,9 +164,11 @@ export class DrawRoom extends Room {
   private start() {
     const players = [...this.members.values()].filter((p) => p.connected);
     if (players.length < DRAW_MIN) throw Error("Нужно минимум три игрока.");
+    if (players.some((p) => !p.avatar))
+      throw Error("Дождитесь, пока все нарисуют аватарки.");
     this.lock();
     for (const [id, player] of this.members)
-      if (!player.connected) this.members.delete(id);
+      if (!player.connected) this.removeMember(id);
     this.clearPictures();
     const phrases = shuffle(prompts);
     this.order = shuffle(players.map((p) => p.id));
@@ -185,6 +204,12 @@ export class DrawRoom extends Room {
       member?: unknown;
     },
   ) {
+    if (this.phase === "lobby" && msg.type === "avatar") {
+      const slot = this.avatars.get(id)!;
+      if (!slot.exists()) throw Error("Сначала нарисуй и отправь аватарку.");
+      this.members.get(id)!.avatar = slot.url;
+      return;
+    }
     if (this.phase === "lobby" && id === this.host && msg.type === "kick") {
       if (
         typeof msg.member !== "string" ||
@@ -193,7 +218,7 @@ export class DrawRoom extends Room {
       )
         return;
       const target = this.clients.find((c) => c.sessionId === msg.member);
-      this.members.delete(msg.member);
+      this.removeMember(msg.member);
       this.reconnecting.get(msg.member)?.reject(new Error("Removed by host"));
       if (target) target.leave(DRAW_KICKED, "Removed by host");
       return;
@@ -203,7 +228,7 @@ export class DrawRoom extends Room {
     if (this.phase === "results" && id === this.host && msg.type === "again") {
       this.clearPictures();
       for (const p of this.members.values()) {
-        if (!p.connected) this.members.delete(p.id);
+        if (!p.connected) this.removeMember(p.id);
         else
           Object.assign(p, {
             points: 0,
@@ -369,6 +394,9 @@ export class DrawRoom extends Room {
       ready: this.ready(),
       done: false,
     };
+    if (this.phase === "lobby" && !this.members.get(you)?.avatar) {
+      v.avatarUpload = this.avatars.get(you)?.upload;
+    }
     if (this.phase === "drawing") {
       const own = this.pictures.get(you);
       v.prompt = own?.prompt;

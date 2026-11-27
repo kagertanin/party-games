@@ -10,7 +10,8 @@ import {
 import type { DrawDemo } from "./demo";
 import { mountCanvas, paintStrokes } from "./canvas";
 import { escape as esc } from "../rooms/ui";
-import { openDrawForm, lobbyMarkup } from "./rooms";
+import { openDrawForm, mountDrawLobby } from "./rooms";
+import { drawServerUrl } from "./avatar";
 import { finale } from "./finale";
 import { mountReveal } from "./reveal";
 import { songbird } from "./art/songbird";
@@ -22,15 +23,10 @@ import "../survey/textile.css";
 import "../survey/landing-textile.css";
 import "../survey/lobby-textile.css";
 import "./style.css";
+import "./finale.css";
+import "./lobby.css";
 
-const hostUrl =
-  import.meta.env.VITE_SERVER_URL ||
-  (location.hostname.endsWith(".chatgpt.site")
-    ? "https://party-games-kagertanin.waw0.amvera.tech"
-    : import.meta.env.DEV
-      ? location.protocol + "//" + location.hostname + ":2567"
-      : location.origin);
-const http = String(hostUrl).replace(/^ws/, "http").replace(/\/$/, "");
+const http = drawServerUrl();
 const storage = "risovach.room";
 const nameKey = "risovach.name";
 function read(k: string) {
@@ -85,7 +81,7 @@ export function mountDraw(app: HTMLElement) {
   let transitioning = false;
   let fastFinale = false;
   const header = app.querySelector<HTMLElement>(".survey-header")!;
-  let removing = "";
+  let lobby: ReturnType<typeof mountDrawLobby> | undefined;
   let recap: ReturnType<typeof mountReveal> | undefined;
   const notify = (s: string) => {
     app.querySelector(".draw-notice")!.textContent = s;
@@ -151,6 +147,8 @@ export function mountDraw(app: HTMLElement) {
     }
   };
   function entrance() {
+    lobby?.dispose(true);
+    lobby = undefined;
     pageKey = "";
     shownStage = "";
     header.hidden = false;
@@ -258,7 +256,10 @@ export function mountDraw(app: HTMLElement) {
         notify("");
         render(v);
       });
-      room.onMessage<string>("problem", notify);
+      room.onMessage<string>("problem", (message) => {
+        lobby?.retryAvatar();
+        notify(message);
+      });
       room.onLeave((code) => {
         if (socket !== room || voluntary) return;
         socket = undefined;
@@ -318,6 +319,8 @@ export function mountDraw(app: HTMLElement) {
       location.href = "?game=draw";
       return;
     }
+    lobby?.dispose(true);
+    lobby = undefined;
     voluntary = true;
     clearTimeout(reconnectTimer);
     write(storage, "");
@@ -369,7 +372,9 @@ export function mountDraw(app: HTMLElement) {
       v.phase,
       v.phase === "drawing" || v.phase === "captions" ? v.done : "",
     ].join(".");
-    if (pageKey !== key || v.phase === "lobby") {
+    if (pageKey !== key) {
+      lobby?.dispose(v.phase !== "lobby");
+      lobby = undefined;
       drawer?.dispose(v.phase !== "drawing" || v.done);
       drawer = undefined;
 
@@ -378,48 +383,7 @@ export function mountDraw(app: HTMLElement) {
       recap?.dispose();
       recap = undefined;
       if (v.phase === "lobby") {
-        stage.innerHTML = lobbyMarkup(v, removing);
-        stage.onclick = async (event) => {
-          const b = (event.target as HTMLElement).closest<HTMLButtonElement>(
-            "button",
-          );
-          if (!b) return;
-          if (b.hasAttribute("data-manage") || b.hasAttribute("data-cancel")) {
-            removing = b.dataset.manage ?? "";
-            render(v);
-            return;
-          }
-          if (b.dataset.kick) {
-            removing = "";
-            act("kick", { member: b.dataset.kick });
-            return;
-          }
-          switch (b.dataset.roomAction) {
-            case "start":
-              act("start");
-              break;
-            case "leave":
-              exit.click();
-              break;
-            case "copy-code":
-            case "copy-link": {
-              const value =
-                b.dataset.roomAction === "copy-code" ? v.code : location.href;
-              try {
-                await navigator.clipboard.writeText(value);
-                stage.querySelector("[data-room-notice]")!.textContent =
-                  "Скопировано.";
-              } catch {
-                const field = stage.querySelector<HTMLInputElement>(
-                  ".survey-online-code input",
-                )!;
-                field.value = value;
-                field.select();
-              }
-              break;
-            }
-          }
-        };
+        lobby = mountDrawLobby(stage, v, http, act, () => exit.click(), notify);
       } else if (v.phase === "drawing") {
         stage.innerHTML =
           bar(v, "Рисование") +
@@ -487,6 +451,8 @@ export function mountDraw(app: HTMLElement) {
           .querySelector("button")
           ?.addEventListener("click", () => act("again"));
       }
+    } else if (v.phase === "lobby") {
+      lobby?.update(v);
     }
     if (v.phase === "reveal") recap?.update(v);
     if (v.phase === "vote") {

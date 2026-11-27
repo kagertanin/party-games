@@ -42,11 +42,21 @@ export function prepareReveal(
   }
   pause("opening", 1100);
   for (const [step, { choice, voters }] of sorted.entries()) {
-    const title = { id: choice.id, text: choice.text, voters };
-    beats.push({
-      frame: { step, total, kind: "ballots", titles: [title], awards: [] },
-      duration: voters.length ? 4600 : 2400,
-    });
+    // Reveal one check per second. Reconnects receive exactly the same visible votes.
+    const duration = voters.length
+      ? Math.max(4600, (voters.length + 1) * 1000)
+      : 2400;
+    for (let visible = 0; visible <= voters.length; visible++) {
+      const title = {
+        id: choice.id,
+        text: choice.text,
+        voters: voters.slice(0, visible),
+      };
+      beats.push({
+        frame: { step, total, kind: "ballots", titles: [title], awards: [] },
+        duration: visible < voters.length ? 1000 : duration - visible * 1000,
+      });
+    }
   }
   pause("tally", 1600);
   for (const [step, { choice, voters }] of sorted.entries()) {
@@ -90,7 +100,7 @@ export function prepareReveal(
       duration: awards.length ? 4000 : 1800,
     });
   }
-  pause("favorites", 10000);
+  pause("favorites", 20000);
   return beats;
 }
 

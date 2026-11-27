@@ -1,5 +1,6 @@
 import { playSound } from "../audio/sound";
 import type { DrawView, RevealAward, RevealFrame } from "../../shared/draw";
+import { avatarMarkup } from "./avatar";
 import { escape } from "../rooms/ui";
 
 const fmt = (value: number) => value.toLocaleString("ru-RU");
@@ -17,15 +18,16 @@ export function mountReveal(
   picture: string,
   like: (id: string, liked: boolean) => void,
 ) {
-  root.innerHTML = `<div class="draw-recap"><div class="recap-rail"><figure class="recap-picture">${picture}</figure>
-    <aside class="draw-ranking" hidden><h2>Таблица очков</h2><ol></ol></aside></div>
-    <section class="recap-answers"><header hidden><span>Рисунок ${v.turn + 1} из ${v.total}</span>
+  root.innerHTML = `<div class="draw-recap">
+    <header class="recap-heading" aria-hidden="true"><span>Рисунок ${v.turn + 1} из ${v.total}</span>
     <h1>Подсчёт итогов</h1><p class="review-window" hidden>Отметь любимые фразы <b class="draw-clock" aria-label="Осталось времени на сердечки"></b></p></header>
-    <ol class="answer-trail" aria-live="polite" aria-relevant="additions text"></ol></section></div>`;
+    <div class="recap-rail"><figure class="recap-picture">${picture}</figure>
+    <aside class="draw-ranking" hidden><h2>Таблица очков</h2><ol></ol></aside></div>
+    <section class="recap-answers"><ol class="answer-trail" aria-live="polite" aria-relevant="additions text"></ol></section></div>`;
   const board = root.querySelector<HTMLOListElement>(".answer-trail")!;
   const ranking = root.querySelector<HTMLOListElement>(".draw-ranking ol")!;
-  const people = new Map(v.players.map((p) => [p.id, p.name]));
-  const name = (id: string) => escape(people.get(id) ?? "Игрок");
+  const people = new Map(v.players.map((p) => [p.id, p]));
+  const name = (id: string) => escape(people.get(id)?.name ?? "Игрок");
   const tiles = new Map<number, HTMLElement>();
   const rows = new Map<string, HTMLElement>();
   let last = "";
@@ -50,16 +52,21 @@ export function mountReveal(
         String(height - (onRight ? frame.step : frame.step - right)),
       );
       tile.style.setProperty("--single-row", String(frame.total - frame.step));
-      tile.innerHTML = `<h2>${escape(title.text)}</h2><div class="voter-marks">${title.voters
-        .map(
-          (id) =>
-            `<span data-voter="${escape(id)}"><i aria-hidden="true">✓</i>${name(id)}</span>`,
-        )
-        .join("")}</div><div class="answer-details"></div>`;
+      tile.innerHTML = `<div class="answer-card"><div class="answer-bubble">
+        <h2>${escape(title.text)}</h2><div class="voter-marks"></div></div></div>
+        <div class="draw-awards"></div>`;
       // Keep DOM/tab order in final reading order even as the visual board fills upwards.
       board.prepend(tile);
       if (animate) tile.classList.add("new-answer");
       tiles.set(frame.step, tile);
+    }
+    const marks = tile.querySelector<HTMLElement>(".voter-marks")!;
+    for (const id of title.voters.slice(marks.childElementCount)) {
+      const stamp = document.createElement("span");
+      stamp.dataset.voter = id;
+      stamp.innerHTML = `<i aria-hidden="true">✓</i>${name(id)}`;
+      if (animate) stamp.className = "new-vote";
+      marks.append(stamp);
     }
     if (
       tile.dataset.kind === frame.kind ||
@@ -68,21 +75,35 @@ export function mountReveal(
       return;
     tile.dataset.kind = frame.kind;
     if (!title.author) return;
+    const author = people.get(title.author);
+    const signature = document.createElement("div");
+    signature.className = "answer-signature";
+    signature.setAttribute("aria-label", "Автор фразы");
+    signature.innerHTML = `${author ? avatarMarkup(author) : ""}<strong>${name(title.author)}</strong>`;
+    tile.querySelector(".answer-card")!.prepend(signature);
+    if (frame.kind === "truth") {
+      const label = document.createElement("small");
+      label.className = "original-phrase";
+      label.textContent = "Исходная фраза";
+      tile.querySelector(".answer-bubble")!.prepend(label);
+    }
     const totals = new Map<string, { award: RevealAward; amount: number }>();
     for (const award of frame.awards) {
       const entry = totals.get(award.player);
       if (entry) entry.amount += award.amount;
       else totals.set(award.player, { award, amount: award.amount });
     }
-    const details = tile.querySelector<HTMLElement>(".answer-details")!;
-    details.innerHTML = `<p class="answer-author">${frame.kind === "truth" ? "Исходная фраза · Художник" : "Автор подписи"} <strong>${name(title.author)}</strong></p>
-      <div class="draw-awards">${[...totals.values()]
-        .map(
-          ({ award, amount }) =>
-            `<span><b>+${fmt(amount)}</b> ${name(award.player)} <small>${awardReason(award)}</small></span>`,
-        )
-        .join("")}</div>`;
-    if (animate) details.classList.add("ink-in");
+    const awards = tile.querySelector<HTMLElement>(".draw-awards")!;
+    awards.innerHTML = [...totals.values()]
+      .map(
+        ({ award, amount }) =>
+          `<span><b>+${fmt(amount)}</b> ${name(award.player)} <small>${awardReason(award)}</small></span>`,
+      )
+      .join("");
+    if (animate) {
+      signature.classList.add("ink-in");
+      awards.classList.add("ink-in");
+    }
   }
 
   function paintRanking(next: DrawView, scores: Map<string, number>) {
@@ -199,14 +220,19 @@ export function mountReveal(
   function update(next: DrawView) {
     const frame = next.reveal!;
     if (frame.kind === "opening") return;
-    const key = frame.kind + "." + frame.step;
+    const key =
+      frame.kind +
+      "." +
+      frame.step +
+      "." +
+      (frame.titles[0]?.voters.length ?? 0);
     if (key !== last) {
       dispose();
       last = key;
       const animate =
         next.now - next.startedAt < 900 &&
         !matchMedia("(prefers-reduced-motion: reduce)").matches;
-      root.querySelector<HTMLElement>(".recap-answers header")!.hidden = false;
+      root.querySelector(".recap-heading")!.removeAttribute("aria-hidden");
       board.style.setProperty("--rows", String(Math.ceil(frame.total / 2)));
       board.style.setProperty("--answers", String(frame.total));
       for (const previous of next.revealed ?? []) drawTile(previous, false);

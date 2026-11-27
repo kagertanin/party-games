@@ -17,11 +17,20 @@ import {
 import type { Stroke } from "./canvas";
 import { demoExamples } from "./demo-examples";
 
+// Completed portraits for the four demo players, independent of the secret prompts.
+const portraits = [
+  new URL("./art/avatars/anya.png", import.meta.url).href,
+  new URL("./art/avatars/borya.png", import.meta.url).href,
+  new URL("./art/avatars/ira.png", import.meta.url).href,
+  new URL("./art/avatars/leva.png", import.meta.url).href,
+];
+
 export class DrawDemo {
   readonly players: DrawPlayer[] = demoExamples.map(({ name }, index) => ({
     id: "d" + index,
     name,
     connected: true,
+    avatar: portraits[index],
     points: 0,
     guesses: 0,
     fooled: 0,
