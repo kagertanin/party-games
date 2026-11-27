@@ -5,15 +5,17 @@ import { matchMaker } from "@colyseus/core";
 import { Client, type Room } from "colyseus.js";
 import { startServer } from "../server/index.js";
 import { defaultHideSettings } from "../shared/hide/settings.js";
-import type { Snapshot } from "../shared/hide/world.js";
+import { eye, models, office, target, type Snapshot } from "../shared/hide/world.js";
+import type { Shot } from "../shared/hide/shot.js";
 
-test("host configures both timers and a finite per-hunter shot allowance", { timeout: 10000 }, async (t) => {
+test("hunters keep their lives when shooting scenery and lose one for a copyable prop", { timeout: 10000 }, async (t) => {
   const server = await startServer(0);
   const address = server.transport.server!.address();
   assert.ok(address && typeof address !== "string");
   const api = new Client("http://127.0.0.1:" + address.port);
   const clients: Room[] = [];
   const views = new Map<Room, Snapshot>();
+  const shots = new Map<Room, Shot[]>();
   t.after(async () => {
     await Promise.allSettled(clients.map(r => r.leave()));
     await server.gracefullyShutdown(false);
@@ -22,7 +24,9 @@ test("host configures both timers and a finite per-hunter shot allowance", { tim
     clients.push(r);
     r.onMessage("view", (view: Snapshot) => views.set(r, view));
     r.onMessage("feedback", () => {});
-    r.onMessage("shot", () => {});
+    const events: Shot[] = [];
+    shots.set(r, events);
+    r.onMessage("shot", (shot: Shot) => events.push(shot));
     r.send("sync");
     return r;
   }
@@ -32,7 +36,7 @@ test("host configures both timers and a finite per-hunter shot allowance", { tim
       if (view && check(view)) return view;
       await wait(20);
     }
-    assert.fail("Expected settings, phase or shot allowance not received");
+    assert.fail("Expected settings, phase or hunter lives not received");
   }
 
   const host = watch(await api.create("hide"));
@@ -63,12 +67,32 @@ test("host configures both timers and a finite per-hunter shot allowance", { tim
   assert.equal(hunting.settings.huntSeconds, 45);
   assert.ok(hunting.until - hunting.now > 44000 && hunting.until - hunting.now <= 45000);
 
-  const aim = { forward: 0, side: 0, yaw: 0, pitch: 1.45 };
-  host.send("use", { aim });
+  // A shot at open sky and another at the office wall both produce a visible
+  // shot for the other clients without using up the hunter's last life.
+  host.send("use", { aim: { forward: 0, side: 0, yaw: 0, pitch: 1.45 } });
+  await until(hider, () => shots.get(hider)!.length === 1);
+  assert.equal(shots.get(hider)![0].impact, false);
+  await wait(260);
+  host.send("use", { aim: { forward: 0, side: 0, yaw: Math.PI, pitch: 0 } });
+  const afterWall = await until(hider, () => shots.get(hider)!.length === 2);
+  assert.equal(shots.get(hider)![1].impact, true);
+  assert.equal(afterWall.players.find(p => p.id === host.sessionId)?.ammo, 1);
+
+  const bench = office.props.find(p => p.id === "furniture_bench" && p.at[0] === -6 && p.at[2] === -20)!;
+  function aimAtBench(r: Room) {
+    const p = hunting.players.find(p => p.id === r.sessionId)!;
+    const dx = bench.at[0] - p.x, dz = bench.at[2] - p.z;
+    const yaw = Math.atan2(-dx, -dz);
+    const pitch = Math.atan2(bench.at[1] + models[bench.id].size[1] / 2 - eye(p), Math.hypot(dx, dz));
+    assert.equal(office.props[target({ ...p, yaw, pitch }).prop], bench);
+    return { forward: 0, side: 0, yaw, pitch };
+  }
+  await wait(260);
+  host.send("use", { aim: aimAtBench(host) });
   const afterMiss = await until(hider, v => v.players.find(p => p.id === host.sessionId)?.ammo === 0);
   assert.equal(afterMiss.phase, "hunt");
   assert.equal(afterMiss.players.find(p => p.id === hunter.sessionId)?.ammo, 1);
-  hunter.send("use", { aim });
+  hunter.send("use", { aim: aimAtBench(hunter) });
   const done = await until(hider, v => v.phase === "results");
   assert.equal(done.winner, "Прячущиеся");
   assert.ok(done.players.filter(p => p.hunter).every(p => p.ammo === 0));

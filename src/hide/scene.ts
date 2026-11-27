@@ -368,14 +368,14 @@ export async function createScene(
         pitch = me.pitch;
       }
       self = { ...me };
-      prediction = active ? new LocalMotion(me, v.ack) : undefined;
+      prediction = active ? new LocalMotion(me, v.ack, v.players) : undefined;
       prediction?.resetClock(performance.now());
       jumpPress = me.lastJump ?? 0;
       if (me.alive || phase === "lobby") lastCameraFrame = 0;
       keys.clear();
       touchX = touchY = 0;
     } else {
-      prediction.reconcile(me, v.ack);
+      prediction.reconcile(me, v.ack, v.players);
       self = prediction.pose(input());
     }
     remotes.push(v, performance.now());

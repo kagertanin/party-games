@@ -32,6 +32,7 @@ test("two clients agree on a completed walk when input is delayed and repeated",
   }
 
   const hunter = await client.create("hide");
+  assert.match(hunter.roomId, /^H[0-9A-F]{6}$/);
   const hunterView = observe(hunter);
   const hider = await client.joinById(hunter.roomId);
   const hiderView = observe(hider);

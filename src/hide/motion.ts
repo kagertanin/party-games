@@ -1,5 +1,5 @@
 import { MAX_BATCH_STEPS, STEP_SECONDS, type MoveBatch } from "../../shared/hide/movement.js";
-import { walk, type Input, type Player, type Snapshot } from "../../shared/hide/world.js";
+import { hiderColliders, overlapsHider, walk, type Input, type Player, type Snapshot } from "../../shared/hide/world.js";
 
 export class LocalMotion {
   private player: Player;
@@ -13,9 +13,11 @@ export class LocalMotion {
   private offsetX = 0;
   private offsetZ = 0;
   private offsetY = 0;
+  private colliders: ReturnType<typeof hiderColliders>;
 
-  constructor(player: Player, ack = 0) {
+  constructor(player: Player, ack = 0, players: Player[] = []) {
     this.player = { ...player };
+    this.colliders = hiderColliders(player, players);
     this.sequence = this.sent = this.acknowledged = ack;
   }
 
@@ -47,7 +49,7 @@ export class LocalMotion {
         this.fraction += remaining;
         break;
       }
-      walk(this.player, move, STEP_SECONDS);
+      walk(this.player, move, STEP_SECONDS, this.colliders);
       this.pending.push(move);
       this.sequence++;
       this.fraction = 0;
@@ -65,12 +67,13 @@ export class LocalMotion {
     return { first, inputs };
   }
 
-  reconcile(player: Player, ack: number) {
+  reconcile(player: Player, ack: number, players: Player[] = []) {
     if (ack < this.acknowledged || ack > this.sequence) return;
+    this.colliders = hiderColliders(player, players);
     this.pending.splice(0, ack - this.acknowledged);
     this.acknowledged = ack;
     const corrected = { ...player };
-    for (const move of this.pending) walk(corrected, move, STEP_SECONDS);
+    for (const move of this.pending) walk(corrected, move, STEP_SECONDS, this.colliders);
     this.offsetX += this.player.x - corrected.x;
     this.offsetZ += this.player.z - corrected.z;
     this.offsetY += (this.player.y ?? 0) - (corrected.y ?? 0);
@@ -84,7 +87,7 @@ export class LocalMotion {
     if (this.partialInput) {
       // Blend toward the collision-tested end of this step. A shorter
       // collision probe could appear to enter a wall, then snap back.
-      walk(pose, this.partialInput, STEP_SECONDS);
+      walk(pose, this.partialInput, STEP_SECONDS, this.colliders);
       const blend = this.fraction / STEP_SECONDS;
       pose.x = this.player.x + (pose.x - this.player.x) * blend;
       pose.z = this.player.z + (pose.z - this.player.z) * blend;
@@ -92,6 +95,12 @@ export class LocalMotion {
       pose.y = feet + ((pose.y ?? 0) - feet) * blend;
     } else {
       walk(pose, input, 0);
+    }
+    // A peer may have moved into our path since the last snapshot. Do not
+    // smooth the authoritative correction through the newly arrived collider.
+    if ((this.offsetX || this.offsetY || this.offsetZ) && overlapsHider(pose,
+      pose.x + this.offsetX, (pose.y ?? 0) + this.offsetY, pose.z + this.offsetZ, this.colliders)) {
+      this.offsetX = this.offsetY = this.offsetZ = 0;
     }
     pose.x += this.offsetX;
     pose.z += this.offsetZ;

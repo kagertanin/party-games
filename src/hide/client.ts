@@ -3,12 +3,13 @@ import { Client, type Room } from "colyseus.js";
 import { type Snapshot } from "../../shared/hide/world";
 import { isHideSetting, settingLimits, validSetting, type HideSettings } from "../../shared/hide/settings";
 import { createScene } from "./scene";
+import { escape } from "../rooms/ui";
 import "./hide.css";
 
 const settingLabels: Record<keyof HideSettings, string> = {
   hideSeconds: "До выхода водящих, сек",
   huntSeconds: "Время охоты, сек",
-  shotsPerHunter: "Выстрелов на водящего за раунд",
+  shotsPerHunter: "Жизней у водящего",
 };
 const settingFields = (Object.keys(settingLabels) as (keyof HideSettings)[]).map(key =>
   `<label>${settingLabels[key]}<input type="number" required data-setting="${key}" min="1" max="${settingLimits[key]}" step="1"></label>`,
@@ -24,7 +25,7 @@ export function mount(app: HTMLElement) {
     out = root.querySelector("output")!;
   const action = root.querySelector<HTMLButtonElement>(".action")!;
   const jump = root.querySelector<HTMLButtonElement>(".jump")!;
-  const code = new URL(location.href).searchParams.get("room");
+  const invited = new URL(location.href).searchParams.get("room")?.trim() ?? "";
   const client = new Client(
     import.meta.env.VITE_SERVER_URL ||
       (import.meta.env.DEV
@@ -42,18 +43,6 @@ export function mount(app: HTMLElement) {
     messageTimer = 0;
   const key = "hide.connection",
     nameKey = "hide.name";
-  const escape = (s: string) =>
-    s.replace(
-      /[&<>"']/g,
-      (c) =>
-        ({
-          "&": "&amp;",
-          "<": "&lt;",
-          ">": "&gt;",
-          '"': "&quot;",
-          "'": "&#39;",
-        })[c]!,
-    );
   function notify(s: string) {
     out.textContent = s;
     clearTimeout(messageTimer);
@@ -62,29 +51,67 @@ export function mount(app: HTMLElement) {
   function form(error = "") {
     root.dataset.play = "false";
     panel.hidden = false;
-    panel.innerHTML =
-      '<a href="/">Все игры</a><h1>Прятки</h1><p>Brightline Offices · 2–12 игроков</p><form><label>Ваше имя<input maxlength="24" required autocomplete="nickname"></label><button>' +
-      (code ? "Войти в комнату" : "Создать комнату") +
-      "</button></form><small></small>";
-    const input = panel.querySelector("input")!;
-    input.value = localStorage.getItem(nameKey) ?? "";
-    panel.querySelector("small")!.textContent = error;
-    panel.querySelector("form")!.onsubmit = async (e) => {
+    panel.innerHTML = `<a href="/">Все игры</a><h1>Прятки</h1><p>Brightline Offices · 2–12 игроков</p>
+      <form><fieldset class="hide-entry">
+        <div class="hide-modes" role="group" aria-label="Вход в комнату">
+          <button type="button" data-mode="create">Новая комната</button>
+          <button type="button" data-mode="join">Войти по коду</button>
+        </div>
+        <label>Ваше имя<input name="name" maxlength="24" required autocomplete="nickname"></label>
+        <label>Код комнаты<input name="code" placeholder="H123ABC" required autocomplete="off" autocapitalize="characters" spellcheck="false"></label>
+        <button type="submit"></button>
+      </fieldset><small role="status"></small></form>`;
+    const entry = panel.querySelector("form")!;
+    const fields = entry.querySelector("fieldset")!;
+    const nick = entry.elements.namedItem("name") as HTMLInputElement;
+    const code = entry.elements.namedItem("code") as HTMLInputElement;
+    const submit = entry.querySelector<HTMLButtonElement>("[type=submit]")!;
+    const notice = entry.querySelector("small")!;
+    const modes = entry.querySelectorAll<HTMLButtonElement>("[data-mode]");
+    let join = Boolean(invited);
+    function setMode() {
+      for (const b of modes) b.setAttribute("aria-pressed", String((b.dataset.mode === "join") === join));
+      code.disabled = !join;
+      code.closest("label")!.hidden = !join;
+      submit.textContent = join ? "Войти в комнату" : "Создать комнату";
+    }
+    for (const b of modes) b.onclick = () => {
+      join = b.dataset.mode === "join";
+      notice.textContent = "";
+      setMode();
+    };
+    nick.value = localStorage.getItem(nameKey) ?? "";
+    code.value = invited;
+    notice.textContent = error;
+    setMode();
+    entry.onsubmit = async (e) => {
       e.preventDefault();
-      const name = input.value.trim();
-      if (!name) return;
+      if (fields.disabled) return;
+      const name = nick.value.trim();
+      if (!name) {
+        notice.textContent = "Введите имя.";
+        nick.focus();
+        return;
+      }
+      const raw = code.value.trim();
+      const roomCode = /^H[0-9A-F]{6}$/i.test(raw) ? raw.toUpperCase() : raw;
+      // Existing invitation links used nine-character, case-sensitive Colyseus IDs.
+      const legacyInvite = raw === invited && /^[\w-]{9}$/.test(raw);
+      if (join && !/^H[0-9A-F]{6}$/.test(roomCode) && !legacyInvite) {
+        notice.textContent = "Введите код из семи символов, начиная с латинской H.";
+        code.focus();
+        return;
+      }
       localStorage.setItem(nameKey, name);
-      panel.querySelector("button")!.disabled = true;
+      fields.disabled = true;
+      notice.textContent = "Подключаемся…";
       try {
-        await attach(
-          code
-            ? await client.joinById(code, { name })
-            : await client.create("hide", { name }),
-        );
+        await attach(join ? await client.joinById(roomCode, { name }) : await client.create("hide", { name }));
       } catch {
-        form(
-          "Не удалось войти. Проверьте подключение или попросите новую ссылку.",
-        );
+        fields.disabled = false;
+        notice.textContent = join
+          ? "Не удалось войти. Проверьте код, подключение и убедитесь, что в комнате ещё есть места и раунд не начался."
+          : "Не удалось создать комнату. Проверьте подключение и попробуйте ещё раз.";
       }
     };
   }
@@ -160,7 +187,8 @@ export function mount(app: HTMLElement) {
     }
     if (v.phase === "hide") {
       panel.innerHTML =
-        "<h1>Вы водите</h1><p>Игроки выбирают укрытия. Офис откроется через <b class='clock'></b>.</p>";
+        "<h1>Вы водите</h1><p>Игроки выбирают укрытия. Офис откроется через <b class='clock'></b>.</p>" +
+        "<p>Если выстрелите в обычный предмет, в который можно превратиться, потеряете одну жизнь.</p>";
       return;
     }
     if (v.phase === "results") {
@@ -182,7 +210,8 @@ export function mount(app: HTMLElement) {
     // Rebuilding them would discard a partially typed setting on a lobby update.
     if (!panel.querySelector(".hide-settings")) {
       panel.innerHTML = '<a href="/">Все игры</a><h1>Прятки</h1><p class="hide-count"></p>' +
-        '<button id="invite">Скопировать приглашение</button><ul></ul>' +
+        '<label class="hide-room-code">Код комнаты<input readonly value="' + escape(room.roomId) + '"></label>' +
+        '<div class="hide-invites"><button id="copy-code">Скопировать код</button><button id="invite">Скопировать ссылку</button></div><ul></ul>' +
         '<p>Нажмите на роль, чтобы сменить сторону. Для старта нужен хотя бы один игрок с каждой стороны.</p>' +
         '<fieldset class="hide-settings"><legend>Настройки раунда</legend>' + settingFields + '</fieldset>' +
         '<button id="start">Начать раунд</button><p class="hide-start-wait">Ожидаем старта</p>';
@@ -237,12 +266,14 @@ export function mount(app: HTMLElement) {
       room.send("role", { id: p.id, hunter: !p.hunter });
     }
     if (b.id === "start" || b.id === "again") room.send(b.id);
-    if (b.id === "invite") {
+    if (b.id === "invite" || b.id === "copy-code") {
+      const copyCode = b.id === "copy-code";
+      const value = copyCode ? room.roomId : location.href;
       try {
-        await navigator.clipboard.writeText(location.href);
-        notify("Ссылка скопирована");
+        await navigator.clipboard.writeText(value);
+        notify(copyCode ? "Код скопирован" : "Ссылка скопирована");
       } catch {
-        prompt("Ссылка на комнату", location.href);
+        prompt(copyCode ? "Код комнаты" : "Ссылка на комнату", value);
       }
     }
   });
@@ -261,7 +292,7 @@ export function mount(app: HTMLElement) {
     const status =
       (me.alive
         ? me.hunter
-          ? "Водящий · Патроны " + me.ammo + "/" + view.settings.shotsPerHunter
+          ? "Водящий · Жизни " + me.ammo + "/" + view.settings.shotsPerHunter
           : "Прячетесь"
         : "Наблюдение") +
       "   " +
@@ -311,6 +342,6 @@ export function mount(app: HTMLElement) {
     form("Время возврата истекло. Войдите в комнату снова.");
   }
   const token = sessionStorage.getItem(key);
-  if (code && token?.startsWith(code + ":")) void resume(token);
+  if (invited && token?.startsWith(invited + ":")) void resume(token);
   else form();
 }

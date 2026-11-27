@@ -22,6 +22,7 @@ export interface Player {
   pitch: number;
   facing: number;
   form: string;
+  /** Remaining hunter lives; keep the original field name on the wire. */
   ammo: number;
 }
 export interface Snapshot {
@@ -112,26 +113,44 @@ export function cameraDistance(at: number[], dir: number[]) {
     distance = Math.min(distance, intersect(at, dir, o, cameraMargin) - 0.015);
   return Math.max(0.01, distance);
 }
-export function body(p: Player) {
+export function body(p: Player, facing = p.facing) {
   const s = models[p.form]?.size ?? [0.52, 1.72, 0.52];
-  return bounds([p.x, (p.y ?? 0) + s[1] / 2, p.z], s, p.facing, -2);
+  return bounds([p.x, (p.y ?? 0) + s[1] / 2, p.z], s, facing, -2);
+}
+// Human movement has a fixed footprint, independent of where the camera looks.
+// Props use the orientation copied from the office model.
+function hiderBody(p: Player) {
+  return body(p, p.form ? p.facing : 0);
+}
+
+export function hiderColliders(p: Player, players: Iterable<Player>): Bounds[] {
+  if (p.hunter) return empty;
+  const others: Bounds[] = [];
+  for (const other of players) {
+    if (other.id !== p.id && !other.hunter && other.alive) others.push(hiderBody(other));
+  }
+  return others;
 }
 export function eye(p: Player) {
   return (p.y ?? 0) + Math.max(0.23, (models[p.form]?.size[1] ?? 1.72) * 0.875);
 }
-export function walk(p: Player, input: Input, seconds: number) {
+export function walk(p: Player, input: Input, seconds: number, others = empty) {
   p.yaw = input.yaw;
   p.pitch = input.pitch;
   if (!p.form) p.facing = p.yaw;
-  const speed =
-    (4.6 * seconds) / Math.max(1, Math.hypot(input.side, input.forward));
+  // A legacy/time-delayed step can span a whole small disguise in one tick.
+  const steps = others.length ? Math.max(1, Math.ceil(seconds * 60)) : 1;
+  const dt = seconds / steps;
+  const speed = (4.6 * dt) / Math.max(1, Math.hypot(input.side, input.forward));
   const dx =
     (Math.cos(p.yaw) * input.side - Math.sin(p.yaw) * input.forward) * speed;
   const dz =
     (-Math.sin(p.yaw) * input.side - Math.cos(p.yaw) * input.forward) * speed;
-  if (dx && fits(p, p.x + dx, p.z)) p.x += dx;
-  if (dz && fits(p, p.x, p.z + dz)) p.z += dz;
-  if (!p.hunter && seconds > 0) stepHeight(p, input, seconds);
+  for (let i = 0; i < steps; i++) {
+    if (dx && fits(p, p.x + dx, p.z, others)) p.x += dx;
+    if (dz && fits(p, p.x, p.z + dz, others)) p.z += dz;
+    if (!p.hunter && dt > 0) stepHeight(p, input, dt, others);
+  }
 }
 
 function footprintRadius(p: Player) {
@@ -147,10 +166,29 @@ function overlapsFootprint(x: number, z: number, radius: number, o: Bounds) {
 }
 
 const contactEpsilon = 1e-5;
+// Separating-axis test on both models' local X/Z axes. Using the moving
+// prop's full footprint also keeps long sofas and desks from clipping corners.
+function hidersOverlap(a: Bounds, x: number, z: number, b: Bounds) {
+  const dx = x - b.x, dz = z - b.z;
+  const cos = Math.abs(a.cosine * b.cosine + a.sine * b.sine);
+  const sin = Math.abs(a.sine * b.cosine - a.cosine * b.sine);
+  return Math.abs(dx * a.cosine - dz * a.sine) < a.w + b.w * cos + b.d * sin - contactEpsilon &&
+    Math.abs(dx * a.sine + dz * a.cosine) < a.d + b.w * sin + b.d * cos - contactEpsilon &&
+    Math.abs(dx * b.cosine - dz * b.sine) < b.w + a.w * cos + a.d * sin - contactEpsilon &&
+    Math.abs(dx * b.sine + dz * b.cosine) < b.d + a.w * sin + a.d * cos - contactEpsilon;
+}
+
+export function overlapsHider(p: Player, x: number, feet: number, z: number, others: Bounds[]) {
+  if (!others.length) return false;
+  const moving = hiderBody(p);
+  const head = feet + moving.h * 2;
+  return others.some(o => o.y + o.h > feet + contactEpsilon && o.y - o.h < head - contactEpsilon &&
+    hidersOverlap(moving, x, z, o));
+}
 const gravity = 16;
 const jumpSpeed = 5.1; // A single press rises about 0.81 metres; later presses reset the impulse.
 
-function stepHeight(p: Player, input: Input, dt: number) {
+function stepHeight(p: Player, input: Input, dt: number, others: Bounds[]) {
   const feet = p.y ?? 0;
   let speed = p.vy ?? 0;
   if ((input.jump ?? 0) > (p.lastJump ?? 0)) {
@@ -162,31 +200,32 @@ function stepHeight(p: Player, input: Input, dt: number) {
   const height = models[p.form]?.size[1] ?? 1.72;
   const radius = footprintRadius(p);
   const next = feet + speed * dt - 0.5 * gravity * dt * dt;
-  let limit = next >= feet ? Infinity : 0;
-  for (const o of near(p.x, p.z)) {
-    if (next >= feet) {
-      const clearance = o.y - o.h - height;
-      if (clearance < feet - contactEpsilon || clearance > next || clearance >= limit) continue;
-      if (overlapsFootprint(p.x, p.z, radius, o)) limit = clearance;
-    } else {
-      const top = o.y + o.h;
-      if (top > feet + contactEpsilon || top < next || top <= limit) continue;
-      if (overlapsFootprint(p.x, p.z, radius, o)) limit = top;
-    }
+  const rising = next >= feet;
+  let limit = rising ? Infinity : 0;
+  const moving = others.length ? hiderBody(p) : undefined;
+  function constrain(o: Bounds, dynamic: boolean) {
+    const contact = rising ? o.y - o.h - height : o.y + o.h;
+    if (rising ? contact < feet - contactEpsilon || contact > next || contact >= limit :
+        contact > feet + contactEpsilon || contact < next || contact <= limit) return;
+    const overlaps = dynamic ? hidersOverlap(moving!, p.x, p.z, o) : overlapsFootprint(p.x, p.z, radius, o);
+    if (overlaps) limit = contact;
   }
-  const stopped = next >= feet ? next >= limit : next <= limit;
+  for (const o of near(p.x, p.z)) constrain(o, false);
+  for (const o of others) constrain(o, true);
+  const stopped = rising ? next >= limit : next <= limit;
   p.y = stopped ? limit : next;
   p.vy = stopped ? 0 : speed - gravity * dt;
 }
 
-export function fits(p: Player, x: number, z: number) {
+export function fits(p: Player, x: number, z: number, others = empty) {
   if (Math.abs(x) > 49 || Math.abs(z) > 44) return false;
   const feet = p.y ?? 0;
   const head = feet + (models[p.form]?.size[1] ?? 1.72);
   const radius = footprintRadius(p);
-  return !near(x, z).some(o =>
+  if (near(x, z).some(o =>
     o.y + o.h > feet + contactEpsilon && o.y - o.h < head - contactEpsilon &&
-    overlapsFootprint(x, z, radius, o));
+    overlapsFootprint(x, z, radius, o))) return false;
+  return !overlapsHider(p, x, feet, z, others);
 }
 export function direction(yaw: number, pitch: number) {
   return [
@@ -232,7 +271,8 @@ export function target(p: Player, players: Player[] = [], range = Infinity) {
     }
   }
   for (const other of players) {
-    if (other.id === p.id || other.hunter || !other.alive) continue;
+    // A found disguise is still visible and blocks shots at scenery behind it.
+    if (other.id === p.id || other.hunter) continue;
     const d = intersect(at, dir, body(other));
     if (d <= range && d < distance) {
       distance = d;
