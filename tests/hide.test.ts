@@ -42,6 +42,12 @@ test("Brightline Offices has all models and a copyable object at the hider entra
     Math.hypot(dx, dz),
   );
   assert.equal(office.props[target(me).prop].id, bin.id);
+  // A discovered disguise still in front of this bin blocks the shot.
+  const discovered = { ...me, id: "found", form: bin.id, x: bin.at[0] - dx / 4,
+    z: bin.at[2] - dz / 4, y: (eye(me) - models[bin.id].size[1] / 2) / 4, alive: false };
+  const blocked = target(me, [discovered]);
+  assert.equal(blocked.id, discovered.id);
+  assert.equal(blocked.prop, -1);
   // Both sides of the nearby grid-cell boundary must see the same prop as
   // a full-length ray; the reticle and copy action use this shorter query.
   for (const x of [-16.01, -15.99, -14]) {
@@ -131,10 +137,7 @@ test(
     hiddenPlayer.z = -35;
     host.send("input", { forward: 0, side: 0, yaw: Math.PI, pitch: 0 });
     host.send("use");
-    await until(
-      host,
-      (s) => s.players.find((p) => p.id === host.sessionId)?.ammo === 5,
-    );
+    await until(hider, () => shots.get(hider)!.length === 1 && shots.get(host)!.length === 1);
     assert.equal(shots.get(host)!.length, 1);
     assert.deepEqual(shots.get(hider), shots.get(host));
     assert.equal(shots.get(host)![0].hit, "");
@@ -161,7 +164,7 @@ test(
     assert.equal(found.form, "furniture_trashcan");
     assert.ok(found.foundAt && result.now >= found.foundAt);
     assert.equal(result.winner, "Водящие");
-    assert.equal(result.players.find((p) => p.id === host.sessionId)?.ammo, 4);
+    assert.equal(result.players.find((p) => p.id === host.sessionId)?.ammo, 6);
     host.send("again");
     await until(host, (s) => s.phase === "lobby");
   },

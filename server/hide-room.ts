@@ -1,10 +1,12 @@
 import { Room, type Client } from "@colyseus/core";
+import { randomBytes } from "node:crypto";
 import {
   office,
   models,
   copyRange,
   rad,
   fits,
+  hiderColliders,
   target,
   walk,
   type Player,
@@ -16,6 +18,8 @@ import { shotPath } from "../shared/hide/shot.js";
 import { MAX_BATCH_STEPS, STEP_SECONDS } from "../shared/hide/movement.js";
 
 import { defaultHideSettings, isHideSetting, validSetting } from "../shared/hide/settings.js";
+
+const activeCodes = new Set<string>();
 
 interface InputStream {
   ack: number;
@@ -50,6 +54,12 @@ export class HideRoom extends Room {
   private winner = "";
   private ticks = 0;
   onCreate() {
+    let code: string;
+    do {
+      code = "H" + randomBytes(3).toString("hex").toUpperCase();
+    } while (activeCodes.has(code));
+    this.roomId = code;
+    activeCodes.add(code);
     this.onMessage("sync", (c) => this.sendView(c));
     this.onMessage("settings", (client, change) => {
       if (this.phase !== "lobby" || client.sessionId !== this.host) return;
@@ -152,7 +162,6 @@ export class HideRoom extends Room {
         const now = Date.now();
         if (!p.ammo || now - (this.shotAt.get(p.id) ?? 0) < 240) return;
         this.shotAt.set(p.id, now);
-        p.ammo--;
         const at = clamp(
           Number.isFinite(v?.seen) ? v.seen : now,
           now - 300,
@@ -164,12 +173,18 @@ export class HideRoom extends Room {
         const ray = target(p, past ?? [...this.players.values()]);
         const hit = this.players.get(ray.id);
         const found = Boolean(hit?.alive);
+        const wrongProp = ray.prop >= 0 && models[office.props[ray.prop].id].disguise;
+        let feedback = "Промах";
         if (hit && found) {
           hit.alive = false;
           hit.foundAt = now;
+          feedback = "Найден игрок!";
+        } else if (wrongProp) {
+          p.ammo--;
+          feedback = "Обычный предмет · −1 жизнь";
         }
         this.broadcast("shot", shotPath(p, ray.distance, found ? ray.id : ""));
-        c.send("feedback", found ? "Найден игрок!" : "Промах");
+        c.send("feedback", feedback);
         this.checkEnd();
       } else {
         const t = target(p, [], copyRange);
@@ -177,7 +192,7 @@ export class HideRoom extends Room {
           return c.send("feedback", "Подойдите и наведитесь на предмет");
         const prop = office.props[t.prop];
         const next = { ...p, form: prop.id, facing: (prop.yaw ?? 0) * rad };
-        if (!models[prop.id].disguise || !fits(next, p.x, p.z))
+        if (!models[prop.id].disguise || !fits(next, p.x, p.z, hiderColliders(next, this.players.values())))
           return c.send("feedback", "Для этого облика нужно другое место");
         Object.assign(p, next);
         c.send("feedback", "Облик скопирован");
@@ -185,6 +200,9 @@ export class HideRoom extends Room {
       this.publish();
     });
     this.setSimulationInterval((dt) => this.step(Math.min(dt, 100) / 1000), 50);
+  }
+  onDispose() {
+    activeCodes.delete(this.roomId);
   }
   onJoin(c: Client, opts: { name?: unknown }) {
     const id = c.sessionId;
@@ -271,6 +289,8 @@ export class HideRoom extends Room {
       }
     }
     for (const p of this.players.values()) {
+      // Earlier movers already occupy their new positions for this server tick.
+      const colliders = hiderColliders(p, this.players.values());
       if (this.active(p)) {
         const stream = this.streams.get(p.id)!;
         // Budget steps from elapsed SERVER time. Jitter may spend a small
@@ -279,7 +299,7 @@ export class HideRoom extends Room {
         if (stream.received) {
           const count = Math.min(stream.queue.length, Math.floor(stream.credit + 1e-8));
           for (const input of stream.queue.splice(0, count)) {
-            walk(p, input, STEP_SECONDS);
+            walk(p, input, STEP_SECONDS, colliders);
             this.inputs.set(p.id, input);
           }
           stream.credit = Math.max(0, stream.credit - count);
@@ -287,12 +307,12 @@ export class HideRoom extends Room {
           // A suspended tab stops producing inputs. Keep gravity authoritative
           // without extrapolating the player's last WASD or jump press.
           if (!count && ((p.y ?? 0) > 0 || p.vy) && now - stream.lastBatchAt > 250)
-            walk(p, { ...idle(), yaw: p.yaw, pitch: p.pitch }, dt);
+            walk(p, { ...idle(), yaw: p.yaw, pitch: p.pitch }, dt, colliders);
         } else {
-          walk(p, this.inputs.get(p.id)!, dt);
+          walk(p, this.inputs.get(p.id)!, dt, colliders);
         }
       } else if (!p.online && p.alive && (p.y ?? 0) > 0 && (this.phase === "hide" || this.phase === "hunt")) {
-        walk(p, { ...idle(), yaw: p.yaw, pitch: p.pitch }, dt);
+        walk(p, { ...idle(), yaw: p.yaw, pitch: p.pitch }, dt, colliders);
       }
     }
     this.history.push({

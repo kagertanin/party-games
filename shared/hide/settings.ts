@@ -1,6 +1,7 @@
 export interface HideSettings {
   hideSeconds: number;
   huntSeconds: number;
+  /** Starting hunter lives, kept under the original room setting key. */
   shotsPerHunter: number;
 }
 

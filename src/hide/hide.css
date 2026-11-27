@@ -89,6 +89,30 @@ body {
   display: block;
   margin-top: 10px;
 }
+.hide-entry {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+.hide-modes,
+.hide-invites {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.hide-modes {
+  margin-bottom: 18px;
+}
+.hide-modes button[aria-pressed="false"],
+.hide-invites #invite {
+  color: #25463c;
+  background: #dce6d9;
+}
+.hide-room-code input {
+  font-weight: 700;
+  letter-spacing: 0.12em;
+}
 .hide-game output,
 .hide-hud {
   position: absolute;
