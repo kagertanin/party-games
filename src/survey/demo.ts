@@ -10,7 +10,7 @@ import { animateTurnResult } from "./turn-animation";
 import { getReadinessClockAtMs, getTurnTiming, READINESS_MS } from "./turn-timing";
 import { mountHoldConfirm } from "./hold-confirm";
 import { mountAnswerAward } from "./answer-award";
-import { QuestionBallot, QUESTION_BALLOT_CLOCK_MS, QUESTIONS_PER_MATCH } from "./question-ballot";
+import { QuestionBallot, QUESTION_BALLOT_CLOCK_MS, QUESTION_BALLOT_MS, QUESTIONS_PER_MATCH } from "./question-ballot";
 import { animateQuestionChoice } from "./question-transition";
 import { createSurveyLobby } from "./online-lobby";
 import { displayOnlineMatch, type SurveyDisplay } from "./online-match";
@@ -387,7 +387,7 @@ export function mountSurveyDemo(app: HTMLElement) {
     const winners = standings.filter((team) => team.score === standings[0].score);
     return `<main class="survey-wrap survey-results">
       <p class="survey-kicker">Три вопроса сыграны</p>
-      <h1>${winners.length > 1 ? "Ничья" : `Победили <em>${winners[0].name.toLowerCase()}</em>`}</h1>
+      <h1 tabindex="-1">${winners.length > 1 ? "Ничья" : `Победили <em>${winners[0].name.toLowerCase()}</em>`}</h1>
       ${winners.length > 1 ? `<p>${winners.map((team) => team.name).join(" · ")} набрали по ${winners[0].score} очков.</p>` : ""}
       <ol>${standings.map((team) => {
         const index = match.teams.indexOf(team);
@@ -407,11 +407,16 @@ export function mountSurveyDemo(app: HTMLElement) {
     app.classList.toggle("is-landing", !match && !room);
     app.innerHTML = `
       <header class="survey-header"><a href="./" class="survey-brand"><img src="${gamesLogo}" width="550" height="204" alt="И.Г.Р.Ы."></a>${match || room ? "<span>Сто к одному</span>" : ""}
-        ${!room && isDemo && game && game.phase !== "results" ? `<label class="survey-view-choice">Команда в демо
-          <select id="survey-view-team">
-            ${game.teams.map((team, index) => `<option value="${index}" ${viewingTeam === index ? "selected" : ""}>${escape(team.name)}</option>`).join("")}
-            <option value="auto" ${viewingTeam === null ? "selected" : ""}>Все по очереди</option>
-          </select></label>` : ""}<a href="./">Все игры</a></header>
+        ${!room && isDemo && game && game.phase !== "results" ? `<div class="survey-demo-tools">
+          <label class="survey-view-choice">Команда в демо
+            <select id="survey-view-team">
+              ${game.teams.map((team, index) => `<option value="${index}" ${viewingTeam === index ? "selected" : ""}>${escape(team.name)}</option>`).join("")}
+              <option value="auto" ${viewingTeam === null ? "selected" : ""}>Все по очереди</option>
+            </select>
+          </label>
+          <button class="survey-button secondary-action" type="button" data-survey="simulate-finish"
+            ${resolving || changingQuestion ? "disabled" : ""}>Симулировать конец игры</button>
+        </div>` : ""}<a href="./">Все игры</a></header>
       ${room && match ? lobby.connectionMarkup() : ""}
       ${room && live && viewingTeam === -1 ? '<p class="survey-online-state" role="status">Партия началась, пока вас не было. Можно смотреть и сыграть в следующей партии.</p>' : ""}
       ${!match ? room ? lobby.lobbyMarkup() : setup() : match.phase === "results" ? results(match) : `
@@ -589,6 +594,39 @@ export function mountSurveyDemo(app: HTMLElement) {
     draft = "";
     render();
     app.querySelector<HTMLElement>("#survey-propose input, .survey-panel.is-spectator h2")?.focus({preventScroll: true});
+  }
+
+  function simulateDemoFinish() {
+    const match = game;
+    const deck = demoDeck;
+    if (!isDemo || lobby.view || !match || !deck || match.phase === "results" || resolving || changingQuestion) return;
+
+    if (questionBallot) {
+      const winner = questionBallot.finish(performance.now() + QUESTION_BALLOT_MS);
+      if (winner === undefined) return;
+      match.selectQuestion(winner);
+    }
+    for (let round = match.questionIndex; round < match.questionLimit; round++) {
+      while (match.phase === "turn") {
+        if (!match.proposals.length) {
+          const unopened = match.question.answers.filter((_, index) => !match.opened.has(index));
+          const answer = unopened[Math.floor(Math.random() * unopened.length)];
+          match.propose(0, answer.label);
+        }
+        const candidate = match.votes.size ? undefined : match.confirmationCandidate(true);
+        match.finishTurn(candidate?.id);
+      }
+      match.nextQuestion();
+      if (round + 1 < match.questionLimit) match.selectQuestion(deck.draw()[0]);
+    }
+    questionBallot = null;
+    readiness = null;
+    deadline = 0;
+    votingOnly = false;
+    draft = "";
+    proposalError = "";
+    render();
+    app.querySelector<HTMLElement>(".survey-results h1")?.focus();
   }
 
   async function finishTurn(confirmedProposalId?: number) {
@@ -851,6 +889,7 @@ export function mountSurveyDemo(app: HTMLElement) {
       return;
     }
     if (resolving || changingQuestion) return;
+    if (action === "simulate-finish") { simulateDemoFinish(); return; }
     if (button.dataset.expandTeam !== undefined) {
       const team = Number(button.dataset.expandTeam);
       expandedTeam = expandedTeam === team ? null : team;
