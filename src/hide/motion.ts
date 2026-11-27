@@ -4,6 +4,7 @@ import { walk, type Input, type Player, type Snapshot } from "../../shared/hide/
 export class LocalMotion {
   private player: Player;
   private sequence: number;
+  private sampledAt?: number;
   private sent: number;
   private acknowledged: number;
   private pending: Input[] = [];
@@ -15,6 +16,17 @@ export class LocalMotion {
   constructor(player: Player, ack = 0) {
     this.player = { ...player };
     this.sequence = this.sent = this.acknowledged = ack;
+  }
+
+  resetClock(now: number) {
+    this.sampledAt = now;
+  }
+
+  advanceTo(input: Input, time: number) {
+    if (this.sampledAt === undefined) this.sampledAt = time;
+    if (time <= this.sampledAt) return;
+    this.advance(input, (time - this.sampledAt) / 1000);
+    this.sampledAt = time;
   }
 
   advance(input: Input, seconds: number) {

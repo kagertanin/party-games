@@ -138,3 +138,21 @@ test("a burst of old snapshots after a stalled tab does not add a second of play
   const shown = remote.pose(p, time);
   assert.ok(p.x - shown.x < 0.6);
 });
+
+test("a WASD tap entirely between slow frames is simulated and transmitted once", () => {
+  const state = player();
+  const motion = new LocalMotion(state);
+  motion.resetClock(0);
+  // First render at 0 ms, next one at 150 ms. Commit elapsed time under
+  // the previous controls before changing them at the actual event time.
+  motion.advanceTo(idle, 32);
+  motion.advanceTo(forward, 50);
+  motion.advanceTo(forward, 83);
+  motion.advanceTo(idle, 150);
+  const batch = motion.takeBatch()!;
+  assert.equal(batch.inputs.length, 9);
+  assert.equal(batch.inputs.filter(i => i.forward === 1).length, 3);
+  close(motion.pose(idle).z, state.z - 3 * 4.6 / 60);
+  motion.advanceTo(idle, 150);
+  assert.equal(motion.takeBatch(), undefined);
+});

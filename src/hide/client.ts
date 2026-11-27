@@ -241,7 +241,7 @@ export function mount(app: HTMLElement) {
     const b = pad.getBoundingClientRect(),
       x = (e.clientX - b.left - b.width / 2) / (b.width / 2),
       y = -(e.clientY - b.top - b.height / 2) / (b.height / 2);
-    scene?.joystick(Math.max(-1, Math.min(1, x)), Math.max(-1, Math.min(1, y)));
+    scene?.joystick(Math.max(-1, Math.min(1, x)), Math.max(-1, Math.min(1, y)), e.timeStamp);
   }
   pad.onpointerdown = (e) => {
     pad.setPointerCapture(e.pointerId);
@@ -250,7 +250,7 @@ export function mount(app: HTMLElement) {
   pad.onpointermove = (e) => {
     if (pad.hasPointerCapture(e.pointerId)) joystick(e);
   };
-  pad.onlostpointercapture = () => scene?.joystick(0, 0);
+  pad.onlostpointercapture = e => scene?.joystick(0, 0, e.timeStamp);
   action.onclick = () => scene?.action();
   window.addEventListener("pagehide", () => room?.connection.close());
   async function resume(token: string) {
