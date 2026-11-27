@@ -1,15 +1,16 @@
-import type { DrawView, RevealAward } from "../../shared/draw";
+import type { DrawView, RevealAward, RevealFrame } from "../../shared/draw";
 import { escape } from "../rooms/ui";
 
 const ru = new Intl.PluralRules("ru");
 const plural = (n: number, one: string, few: string, many: string) =>
   (({ one, few, many }) as Record<string, string>)[ru.select(n)] || many;
 export function mountReveal(root: HTMLElement, v: DrawView, picture: string) {
-  root.innerHTML = `<div class="draw-recap"><section class="draw-recap-main"><header><div class="recap-thumb">${picture}</div>
-    <div><small>Рисунок ${v.turn + 1} из ${v.total}</small><h1>Подсчёт итогов</h1></div></header>
-    <article class="draw-reveal-card" aria-live="polite"></article></section>
-    <aside class="draw-ranking"><h2>Таблица очков</h2><ol></ol></aside></div>`;
-  const card = root.querySelector<HTMLElement>(".draw-reveal-card")!;
+  root.innerHTML = `<div class="draw-recap"><div class="recap-rail"><figure class="recap-picture">${picture}</figure>
+    <aside class="draw-ranking" hidden><h2>Таблица очков</h2><ol></ol></aside></div>
+    <section class="recap-answers"><header hidden><span>Рисунок ${v.turn + 1} из ${v.total}</span><h1>Подсчёт итогов</h1></header>
+    <ol class="answer-trail" aria-live="polite" aria-relevant="additions text"></ol></section></div>`;
+  const trail = root.querySelector<HTMLOListElement>(".answer-trail")!;
+  const tiles = new Map<number, HTMLElement>();
   const ranking = root.querySelector<HTMLOListElement>(".draw-ranking ol")!;
   const players = new Map(v.players.map((p) => [p.id, p]));
   const who = (id: string) => escape(players.get(id)?.name ?? "Игрок");
@@ -24,8 +25,39 @@ export function mountReveal(root: HTMLElement, v: DrawView, picture: string) {
       ? `за разгадку, включая +${a.bonus} за серию`
       : "за разгадку";
   }
+  function showAnswer(f: RevealFrame, fresh: boolean) {
+    if (f.kind === "opening") return;
+    let tile = tiles.get(f.step);
+    if (tile?.dataset.kind === f.kind) return tile;
+    if (!tile) {
+      tile = document.createElement("li");
+      tiles.set(f.step, tile);
+      tile.innerHTML = '<h2></h2><div class="answer-details"></div>';
+      tile.querySelector("h2")!.textContent = f.titles[0].text;
+      trail.append(tile);
+      if (fresh) tile.classList.add("new-answer");
+    }
+    const o = f.titles[0];
+    tile.dataset.kind = f.kind;
+    const voters = o.voters.map(who).join(", ");
+    const credits = f.awards
+      .map(
+        (a) =>
+          `<span data-credit="${escape(a.player)}"><b>+${a.amount}</b> ${who(a.player)} <small>${reason(a)}</small></span>`,
+      )
+      .join("");
+    const author = o.author
+      ? `<p class="answer-author">${f.kind === "truth" ? "Исходная фраза · Художник" : "Автор подписи"} <strong>${who(o.author)}</strong></p>`
+      : "";
+    tile.querySelector(".answer-details")!.innerHTML =
+      `${author}<p class="answer-votes"><b>${o.voters.length} ${plural(o.voters.length, "голос", "голоса", "голосов")}</b>${voters ? " · " + voters : ""}${o.likes ? ` <span class="answer-hearts">♥ ${o.likes}</span>` : ""}</p>${credits ? `<div class="draw-awards">${credits}</div>` : ""}`;
+    if (fresh && f.kind !== "suspense")
+      tile.querySelector(".answer-details")!.classList.add("ink-in");
+    return tile;
+  }
   function update(next: DrawView) {
     const f = next.reveal!;
+    if (f.kind === "opening") return;
     const key = f.step + "." + f.kind;
     if (last === key) return;
     const fresh = next.now - next.startedAt < 900;
@@ -34,6 +66,8 @@ export function mountReveal(root: HTMLElement, v: DrawView, picture: string) {
     settlements = [];
     animations.forEach((a) => a.cancel());
     animations = [];
+    root.querySelector<HTMLElement>(".draw-ranking")!.hidden = false;
+    root.querySelector<HTMLElement>(".recap-answers header")!.hidden = false;
     const old = new Map(
       [...rows].map(([id, row]) => [id, row.getBoundingClientRect().top]),
     );
@@ -74,25 +108,14 @@ export function mountReveal(root: HTMLElement, v: DrawView, picture: string) {
       row.classList.toggle("rank-gain", Boolean(amount));
       ranking.append(row);
     });
-    const o = f.titles[0];
-    const voters = o.voters.map((id) => `<span>${who(id)}</span>`).join("");
-    const title =
-      f.kind === "truth"
-        ? "Правильный ответ!"
-        : f.kind === "false"
-          ? "Неправильно!"
-          : f.kind === "empty"
-            ? "Без голосов"
-            : "Кто поверил?";
-    card.className = "draw-reveal-card beat-" + f.kind;
-    card.innerHTML = `<div class="recap-heading"><b>${title}</b><small>${f.step + 1} / ${f.total}</small></div>
-      ${
-        f.kind === "empty"
-          ? `<ul class="draw-empty-answers">${f.titles.map((t) => `<li><strong>${escape(t.text)}</strong><small>${who(t.author!)}${t.likes ? ` · ♥ ${t.likes}` : ""}</small></li>`).join("")}</ul>`
-          : `<h2>${escape(o.text)}</h2>${o.author ? `<p class="draw-byline">${f.kind === "truth" ? "Художник" : "Автор подписи"} · ${who(o.author)}${o.likes ? ` · ♥ ${o.likes}` : ""}</p>` : ""}
-       <div class="draw-voters"><b>${o.voters.length} ${plural(o.voters.length, "голос", "голоса", "голосов")}</b>${voters}</div>`
-      }
-      <div class="draw-awards">${f.awards.map((a) => `<span data-credit="${escape(a.player)}"><b>+${a.amount}</b> ${who(a.player)} <small>${reason(a)}</small></span>`).join("")}</div>`;
+    for (const frame of next.revealed ?? []) {
+      if (
+        !tiles.has(frame.step) ||
+        tiles.get(frame.step)?.dataset.kind === "suspense"
+      )
+        showAnswer(frame, false);
+    }
+    const card = showAnswer(f, animate)!;
     if (!animate) return;
     rows.forEach((row, id) => {
       const before = old.get(id),

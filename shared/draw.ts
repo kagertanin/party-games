@@ -2,7 +2,10 @@ export const DRAW_ROOM = "risovach";
 export const DRAW_MIN = 3;
 export const DRAW_MAX = 12;
 export const DRAW_KICKED = 4005;
-export const DRAW_INTRO = 1250;
+// Includes fading out the previous screen, lettering in, the hold and lettering out.
+export function drawIntro(phase: Phase) {
+  return phase === "drawing" ? 8000 : phase === "lobby" ? 0 : 2700;
+}
 export const DRAW_TIMES = {
   drawing: 120000,
   captions: 30000,
@@ -40,7 +43,7 @@ export interface RevealAward {
 export interface RevealFrame {
   step: number;
   total: number;
-  kind: "empty" | "suspense" | "false" | "truth";
+  kind: "opening" | "empty" | "suspense" | "false" | "truth";
   titles: RevealTitle[];
   awards: RevealAward[];
 }
@@ -65,5 +68,7 @@ export interface DrawView {
   choices?: Choice[];
   liked?: string[];
   reveal?: RevealFrame;
+  revealed?: RevealFrame[];
+  votedFor?: string;
   startedAt: number;
 }

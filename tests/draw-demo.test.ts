@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { drawIntro, DRAW_TIMES } from "../shared/draw";
 import { DrawDemo } from "../src/draw/demo";
 import { demoExamples } from "../src/draw/demo-examples";
 
@@ -108,4 +109,58 @@ test("jumping to the finale settles every award once from every stage, including
       4,
     );
   }
+});
+
+test("the drawing clock has a full two minutes after the five-second title and its fades", () => {
+  const drawing = new DrawDemo().snapshot();
+  assert.equal(drawIntro("drawing"), 8000);
+  assert.equal(
+    drawing.deadline - drawing.startedAt - drawIntro("drawing"),
+    DRAW_TIMES.drawing,
+  );
+});
+
+test("a popular bluff closes the cumulative board and no future answer leaks", () => {
+  const game = new DrawDemo();
+  game.next();
+  game.next();
+  const artist = game.snapshot().artist!;
+  const voters = game.players.filter((p) => p.id !== artist);
+  let bluff = "";
+  for (const p of voters) {
+    game.perspective = p.id;
+    const options = game.snapshot().choices!;
+    if (!bluff) bluff = options.find((o) => o.mine)!.id;
+    const pick = options.find(
+      (o) =>
+        !o.mine &&
+        (p === voters[0] ? o.id !== "answer-" + artist : o.id === bluff),
+    )!;
+    game.act("vote", { choice: pick.id });
+  }
+  assert.equal(game.snapshot().reveal!.kind, "opening");
+  const seen: number[] = [];
+  while (game.phase === "reveal") {
+    const { reveal, revealed } = game.snapshot();
+    assert.deepEqual(
+      revealed!.map((f) => f.step),
+      seen,
+    );
+    if (reveal!.kind !== "opening" && reveal!.kind !== "suspense") {
+      assert.equal(reveal!.titles.length, 1);
+      const prior = revealed!.at(-1);
+      if (prior)
+        assert.ok(
+          prior.titles[0].voters.length <= reveal!.titles[0].voters.length,
+        );
+      seen.push(reveal!.step);
+      if (seen.length === voters.length + 1) {
+        assert.equal(reveal!.kind, "false");
+        assert.equal(reveal!.titles[0].voters.length, 2);
+        assert.ok(revealed!.some((f) => f.kind === "truth"));
+      }
+    }
+    game.next();
+  }
+  assert.equal(seen.length, 4);
 });

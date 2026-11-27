@@ -31,6 +31,19 @@ const allAt = (phase: string, turn?: number) =>
 function act(r: Room, type: string, data: Record<string, unknown> = {}) {
   r.send("play", { epoch: view(r).epoch, type, ...data });
 }
+async function reconnect(index: number) {
+  const previous = rooms[index];
+  const { sessionId, reconnectionToken } = previous;
+  previous.connection.close();
+  await until(
+    () =>
+      view(rooms[0]).players.find((p) => p.id === sessionId)?.connected ===
+      false,
+    "seat reserved",
+  );
+  latest.delete(sessionId);
+  rooms[index] = watch(await sdk.reconnect(reconnectionToken));
+}
 try {
   rooms.push(watch(await sdk.create(DRAW_ROOM, { name: "Проверка 1" })));
   const extra = watch(
@@ -95,15 +108,7 @@ try {
     }
     await until(() => allAt("vote", i), "vote " + i);
     if (i === 0) {
-      const disconnected = rooms[11],
-        token = disconnected.reconnectionToken;
-      const left = new Promise<void>((resolve) =>
-        disconnected.onLeave(() => resolve()),
-      );
-      disconnected.connection.close();
-      await left;
-      latest.delete(disconnected.sessionId);
-      rooms[11] = watch(await sdk.reconnect(token));
+      await reconnect(11);
       await until(() => allAt("vote", 0), "reconnect");
     }
     const options = view(rooms[0]).choices!;
@@ -112,11 +117,10 @@ try {
     const truth = options.find((o) => o.text === prompts.get(artist))!;
     const voters = rooms.filter((r) => r.sessionId !== artist);
     const fake = options.find((o) => o.text.endsWith(voters[0].sessionId))!;
-    act(
-      rooms.find((r) => r.sessionId === artist)!,
-      "like",
-      { choice: fake.id, likes: true },
-    );
+    act(rooms.find((r) => r.sessionId === artist)!, "like", {
+      choice: fake.id,
+      likes: true,
+    });
     await until(
       () =>
         view(rooms.find((r) => r.sessionId === artist)!).liked?.includes(
@@ -138,7 +142,33 @@ try {
       act(r, "vote", { choice: truth.id });
     }
     await until(() => allAt("reveal", i), "reveal " + i);
-    await until(() => view(rooms[0]).reveal?.kind === "suspense", "suspense");
+    assert.ok(
+      rooms.every(
+        (r) =>
+          view(r).revealed?.length === 0 && view(r).reveal?.kind === "opening",
+      ),
+    );
+    await until(
+      () => rooms.every((r) => view(r).reveal?.kind === "suspense"),
+      "suspense",
+      25000,
+    );
+    const history = view(rooms[0]).revealed!;
+    assert.equal(history.length, 10);
+    assert.ok(
+      history.every(
+        (frame) => frame.kind === "empty" && frame.titles.length === 1,
+      ),
+    );
+    for (const r of rooms) assert.deepEqual(view(r).revealed, history);
+    if (i === 0) {
+      await reconnect(5);
+      await until(
+        () => Boolean(view(rooms[5])?.revealed),
+        "reconnect during reveal",
+      );
+      assert.deepEqual(view(rooms[5]).revealed, history);
+    }
     assert.equal(view(rooms[0]).reveal!.titles[0].author, undefined);
     await until(() => view(rooms[0]).reveal?.kind === "false", "bluff");
     assert.equal(view(rooms[0]).reveal!.awards[0].amount, 500);

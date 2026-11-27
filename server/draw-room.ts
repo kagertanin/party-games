@@ -1,6 +1,7 @@
 import {
   normalizeCaption,
   prepareReveal,
+  revealedBefore,
   applyRevealFrame,
   type DrawOption as Option,
 } from "../shared/draw-reveal.js";
@@ -9,7 +10,7 @@ import { randomBytes, randomInt, randomUUID } from "node:crypto";
 import {
   DRAW_MIN,
   DRAW_KICKED,
-  DRAW_INTRO,
+  drawIntro,
   DRAW_MAX,
   DRAW_TIMES,
   type Phase,
@@ -139,7 +140,7 @@ export class DrawRoom extends Room {
     this.deadline =
       phase === "lobby" || phase === "results"
         ? 0
-        : this.startedAt + DRAW_TIMES[phase] + DRAW_INTRO;
+        : this.startedAt + DRAW_TIMES[phase] + drawIntro(phase);
   }
   private start() {
     const players = [...this.members.values()].filter((p) => p.connected);
@@ -340,7 +341,7 @@ export class DrawRoom extends Room {
     const { frame, duration } = this.beats[this.beat];
     this.startedAt = Date.now();
     this.deadline =
-      this.startedAt + duration + (this.beat === 0 ? DRAW_INTRO : 0);
+      this.startedAt + duration + (this.beat === 0 ? drawIntro("reveal") : 0);
     applyRevealFrame(frame, this.members, this.artist);
   }
   private sendView(client: Client) {
@@ -379,13 +380,17 @@ export class DrawRoom extends Room {
     const publicOption = (o: Option) => ({
       id: o.id,
       text: o.text,
-      mine: !o.truth && o.author === you,
+      mine: o.author === you,
     });
     if (this.phase === "vote") {
       v.choices = this.choices.map(publicOption);
+      v.votedFor = this.votes.get(you);
       v.liked = [...(this.hearts.get(you) ?? [])];
     }
-    if (this.phase === "reveal") v.reveal = this.beats[this.beat].frame;
+    if (this.phase === "reveal") {
+      v.reveal = this.beats[this.beat].frame;
+      v.revealed = revealedBefore(this.beats, this.beat);
+    }
     client.send("view", v);
   }
   private broadcastView() {

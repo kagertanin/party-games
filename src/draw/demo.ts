@@ -1,5 +1,5 @@
 import {
-  DRAW_INTRO,
+  drawIntro,
   DRAW_TIMES,
   type DrawView,
   type DrawPlayer,
@@ -9,6 +9,7 @@ import {
   applyRevealFrame,
   normalizeCaption,
   prepareReveal,
+  revealedBefore,
   type DrawOption,
 } from "../../shared/draw-reveal";
 import type { Stroke } from "./canvas";
@@ -30,13 +31,12 @@ export class DrawDemo {
   private order = [...this.players.slice(1), this.players[0]];
   readonly drawings = new Map(this.players.map((p) => [p.id, [] as Stroke[]]));
   readonly captionDrafts = new Map<string, string>();
-  readonly voteDrafts = new Map<string, string>();
   perspective = "auto";
   phase: Phase = "drawing";
   private turn = 0;
   private epoch = 1;
   private startedAt = Date.now();
-  deadline = this.startedAt + DRAW_TIMES.drawing + DRAW_INTRO;
+  deadline = this.startedAt + DRAW_TIMES.drawing + drawIntro("drawing");
   private submitted = new Set<string>();
   private captions = new Map<string, string>();
   private votes = new Map<string, string>();
@@ -68,7 +68,7 @@ export class DrawDemo {
     this.deadline =
       phase === "results" || phase === "lobby"
         ? 0
-        : this.startedAt + DRAW_INTRO + DRAW_TIMES[phase];
+        : this.startedAt + drawIntro(phase) + DRAW_TIMES[phase];
   }
   private newPicture() {
     this.captions.clear();
@@ -76,7 +76,6 @@ export class DrawDemo {
     this.hearts.clear();
     this.choices = [];
     this.captionDrafts.clear();
-    this.voteDrafts.clear();
     this.beats = [];
     this.enter(this.turn === this.order.length ? "results" : "captions");
   }
@@ -136,7 +135,7 @@ export class DrawDemo {
     const { frame, duration } = this.beats[this.beat];
     this.startedAt = Date.now();
     this.deadline =
-      this.startedAt + duration + (this.beat === 0 ? DRAW_INTRO : 0);
+      this.startedAt + duration + (this.beat === 0 ? drawIntro("reveal") : 0);
     applyRevealFrame(frame, this.members, this.artist);
   }
   next() {
@@ -265,9 +264,13 @@ export class DrawDemo {
           text: o.text,
           mine: o.author === you,
         }));
+        v.votedFor = this.votes.get(you);
         v.liked = [...(this.hearts.get(you) ?? [])];
       }
-      if (phase === "reveal") v.reveal = this.beats[this.beat].frame;
+      if (phase === "reveal") {
+        v.reveal = this.beats[this.beat].frame;
+        v.revealed = revealedBefore(this.beats, this.beat);
+      }
     }
     return v;
   }
