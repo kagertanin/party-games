@@ -6,7 +6,8 @@ import {
   DRAW_ROOM,
   type DrawView,
 } from "../../shared/draw";
-import { mountCanvas } from "./canvas";
+import type { DrawDemo } from "./demo";
+import { mountCanvas, paintStrokes } from "./canvas";
 import { escape as esc } from "../rooms/ui";
 import { openDrawForm, lobbyMarkup } from "./rooms";
 import { mountReveal } from "./reveal";
@@ -47,6 +48,8 @@ function write(k: string, v: string) {
 
 export function mountDraw(app: HTMLElement) {
   let socket: Room | undefined;
+  let demo: DrawDemo | undefined;
+  const demoImages = new Map<string, string>();
   let view: DrawView | undefined;
   let drawer: ReturnType<typeof mountCanvas> | undefined;
   let clockOffset = 0;
@@ -62,7 +65,12 @@ export function mountDraw(app: HTMLElement) {
   const sdk = new Client(http);
   app.classList.add("survey-app", "draw-app");
   app.innerHTML = `<header class="survey-header"><a href="./" class="survey-brand"><img src="${logo}" alt="И.Г.Р.Ы." width="550" height="204"></a>
-    <span data-title hidden>Рисовач</span><button class="survey-button secondary-action draw-exit" data-exit hidden>Выйти</button><a data-all href="./">Все игры</a></header>
+    <span data-title hidden>Рисовач</span>
+    <div class="survey-demo-tools draw-demo-tools" data-demo-tools hidden>
+      <label class="survey-view-choice">Игрок в демо <select data-perspective></select></label>
+      <button class="survey-button secondary-action" data-next>Следующий этап</button>
+      <button class="survey-button secondary-action" data-finish-demo>Симулировать конец игры</button>
+    </div><button class="survey-button secondary-action draw-exit" data-exit hidden>Выйти</button><a data-all href="./">Все игры</a></header>
     <div class="draw-notice" role="status"></div><div class="draw-stage"></div><div class="draw-curtain" aria-hidden="true" hidden></div>`;
   const stage = app.querySelector<HTMLElement>(".draw-stage")!;
   const exit = app.querySelector<HTMLButtonElement>("[data-exit]")!;
@@ -76,8 +84,65 @@ export function mountDraw(app: HTMLElement) {
   };
   const who = (id: string) =>
     esc(view?.players.find((p) => p.id === id)?.name ?? "Игрок");
-  const act = (type: string, extra: Record<string, unknown> = {}) =>
-    socket?.send("play", { epoch: view?.epoch, type, ...extra });
+  const demoTools = app.querySelector<HTMLElement>("[data-demo-tools]")!;
+  const perspective =
+    demoTools.querySelector<HTMLSelectElement>("[data-perspective]")!;
+  const next = demoTools.querySelector<HTMLButtonElement>("[data-next]")!;
+  function refreshDemo() {
+    if (!demo) return;
+    view = demo.snapshot();
+    clockOffset = 0;
+    notify("");
+    render(view);
+  }
+  function startDemo(Game: typeof DrawDemo) {
+    demo = new Game();
+    demoImages.clear();
+    pageKey = "";
+    shownStage = "";
+    perspective.innerHTML =
+      '<option value="auto">По очереди</option>' +
+      demo.players
+        .map((p) => `<option value="${p.id}">${esc(p.name)}</option>`)
+        .join("");
+    perspective.value = demo.perspective;
+    refreshDemo();
+  }
+  perspective.onchange = () => {
+    if (demo) {
+      demo.perspective = perspective.value;
+      refreshDemo();
+    }
+  };
+  next.onclick = () => {
+    demo?.next();
+    refreshDemo();
+  };
+  demoTools.querySelector<HTMLButtonElement>("[data-finish-demo]")!.onclick =
+    () => {
+      demo?.finish();
+      refreshDemo();
+    };
+  const act = (type: string, extra: Record<string, unknown> = {}) => {
+    if (!demo) {
+      socket?.send("play", { epoch: view?.epoch, type, ...extra });
+      return;
+    }
+    if (type === "again") {
+      location.reload();
+      return;
+    }
+    try {
+      demo.act(type, extra);
+      refreshDemo();
+    } catch (error) {
+      notify(
+        error instanceof Error
+          ? error.message
+          : "Не удалось выполнить действие.",
+      );
+    }
+  };
   function entrance() {
     pageKey = "";
     shownStage = "";
@@ -91,10 +156,14 @@ export function mountDraw(app: HTMLElement) {
       <h1>Рисовач</h1><p class="survey-player-range">3–12 игроков</p>
       <p class="survey-lead">Нарисуй свою фразу. Угадай, что рисовали друзья.</p>
       <div class="survey-start"><button class="survey-button primary-action" data-play>Играть</button>
-      <button class="survey-button secondary-action" disabled title="Демо пока недоступно">Демо</button></div></section>
+      <button class="survey-button secondary-action" data-start-demo>Демо</button></div></section>
       <div class="draw-art-patch" role="img" aria-label="Птичка, нарисованная синей ручкой на ткани"></div></main>`;
     stage.querySelector<HTMLButtonElement>("[data-play]")!.onclick = () =>
       openForm("");
+    stage.querySelector<HTMLButtonElement>("[data-start-demo]")!.onclick =
+      () => {
+        location.href = "?game=draw&demo=1";
+      };
   }
   function openForm(code: string) {
     openDrawForm(app, read(nameKey), code, async (name, code) => {
@@ -214,6 +283,10 @@ export function mountDraw(app: HTMLElement) {
     );
   }
   exit.onclick = () => {
+    if (demo) {
+      location.href = "?game=draw";
+      return;
+    }
     voluntary = true;
     clearTimeout(reconnectTimer);
     write(storage, "");
@@ -224,9 +297,20 @@ export function mountDraw(app: HTMLElement) {
     return `<div class="draw-bar"><strong>${label}</strong><span data-progress></span><b class="draw-clock" aria-label="Оставшееся время"></b></div>`;
   }
   function picture(v: DrawView) {
-    return v.picture
-      ? `<img class="draw-picture" alt="Рисунок игрока" src="${esc(http + v.picture)}">`
-      : '<div class="draw-picture blank">Холст остался пустым</div>';
+    if (!v.picture)
+      return '<div class="draw-picture blank">Холст остался пустым</div>';
+    let source = http + v.picture;
+    if (demo) {
+      if (!demoImages.has(v.picture)) {
+        const canvas = document.createElement("canvas");
+        canvas.width = 640;
+        canvas.height = 480;
+        paintStrokes(canvas.getContext("2d")!, demo.drawings.get(v.picture)!);
+        demoImages.set(v.picture, canvas.toDataURL("image/png"));
+      }
+      source = demoImages.get(v.picture)!;
+    }
+    return `<img class="draw-picture" alt="Рисунок игрока" src="${esc(source)}">`;
   }
   function render(v: DrawView) {
     app.classList.remove("is-landing");
@@ -235,9 +319,19 @@ export function mountDraw(app: HTMLElement) {
     exit.hidden = v.phase === "lobby";
     stage.className =
       v.phase === "lobby" ? "draw-stage" : "draw-stage risovach";
+    if (demo) {
+      demoTools.hidden = v.phase === "results";
+      next.textContent = v.phase === "reveal" ? "Дальше" : "Следующий этап";
+      perspective.options[0].text =
+        demo.perspective === "auto"
+          ? "По очереди · " +
+            (v.players.find((p) => p.id === v.you)?.name ?? "")
+          : "По очереди";
+    }
     showStage(v);
     const key = [
       v.code,
+      v.you,
       v.epoch,
       v.phase,
       v.phase === "drawing" || v.phase === "captions" ? v.done : "",
@@ -245,7 +339,7 @@ export function mountDraw(app: HTMLElement) {
     if (pageKey !== key || v.phase === "lobby") {
       drawer?.dispose(v.phase !== "drawing" || v.done);
       drawer = undefined;
-      selection = "";
+      selection = demo?.voteDrafts.get(v.you) ?? "";
       pageKey = key;
       stage.onclick = null;
       updateReveal = undefined;
@@ -296,10 +390,10 @@ export function mountDraw(app: HTMLElement) {
         stage.innerHTML =
           bar(v, "Рисование") +
           `<div class="draw-panel studio"><h1>${esc(v.prompt ?? "Твоё задание")}</h1>${v.done ? "<p>Рисунок принят. Ждём остальных художников.</p>" : '<div class="drawing-pad"></div>'}</div>`;
-        if (!v.done && v.upload)
+        if (!v.done && (v.upload || demo))
           drawer = mountCanvas(
             stage.querySelector(".drawing-pad")!,
-            http + v.upload,
+            demo ? { strokes: demo.drawings.get(v.you)! } : http + v.upload,
             () => act("ready"),
             notify,
           );
@@ -315,6 +409,13 @@ export function mountDraw(app: HTMLElement) {
           const artist = v.you === v.artist;
           panel.innerHTML = `<h1>${artist ? "Твой рисунок" : "Придумай подпись"}</h1>${artist ? "<p>Другие игроки придумывают свои версии.</p>" : v.done ? "<p>Подпись принята. Скоро голосование.</p>" : `<p>Как бы звучало задание к этому рисунку? Предложи версию, в которую поверят друзья.</p><form><label>Твоя версия<input name="caption" required maxlength="80" autocomplete="off"></label><button class="primary">Отправить</button></form>`}`;
           const form = panel.querySelector("form");
+          if (form && demo) {
+            const input = form.elements.namedItem(
+              "caption",
+            ) as HTMLInputElement;
+            input.value = demo.captionDrafts.get(v.you) ?? "";
+            input.oninput = () => demo!.captionDrafts.set(v.you, input.value);
+          }
           if (form)
             form.onsubmit = (e) => {
               e.preventDefault();
@@ -336,7 +437,7 @@ export function mountDraw(app: HTMLElement) {
                 .join(", ")} (${best})</p>`
             : "";
         };
-        stage.innerHTML = `<div class="draw-panel lobby"><h1>Итоги партии</h1><ol class="score-list">${ranked.map((p) => `<li><span>${who(p.id)}</span><b>${p.points}</b></li>`).join("")}</ol>${award("guesses", "Больше всех угадали")}${award("fooled", "Самые убедительные подписи")}${award("likes", "Любимцы компании")}${v.host === v.you ? '<button class="primary" data-again>Ещё партия</button>' : ""}</div>`;
+        stage.innerHTML = `<div class="draw-panel lobby"><h1>Итоги партии</h1><ol class="score-list">${ranked.map((p) => `<li><span>${who(p.id)}</span><b>${p.points}</b></li>`).join("")}</ol>${award("guesses", "Больше всех угадали")}${award("fooled", "Самые убедительные подписи")}${award("likes", "Любимцы компании")}${demo || v.host === v.you ? '<button class="primary" data-again>Ещё партия</button>' : ""}</div>`;
         stage
           .querySelector("button")
           ?.addEventListener("click", () => act("again"));
@@ -362,6 +463,7 @@ export function mountDraw(app: HTMLElement) {
         b.setAttribute("aria-pressed", String(selection === o.id));
         b.onclick = () => {
           selection = o.id;
+          demo?.voteDrafts.set(v.you, o.id);
           render(v);
         };
         const h = choices.querySelector<HTMLButtonElement>(
@@ -403,9 +505,23 @@ export function mountDraw(app: HTMLElement) {
     if (timer)
       timer.textContent =
         Math.floor(left / 60) + ":" + String(left % 60).padStart(2, "0");
-    if (left === 0 && view.phase === "drawing") drawer?.submit();
+    if (!demo && left === 0 && view.phase === "drawing") drawer?.submit();
   }
-  setInterval(tick, 250);
+  setInterval(() => {
+    if (demo && demo.deadline && Date.now() >= demo.deadline) {
+      demo.next();
+      refreshDemo();
+    } else tick();
+  }, 250);
+  if (new URLSearchParams(location.search).get("demo") === "1" && !invited) {
+    void import("./demo")
+      .then(({ DrawDemo }) => startDemo(DrawDemo))
+      .catch(() => {
+        entrance();
+        notify("Не удалось загрузить демо. Попробуйте ещё раз.");
+      });
+    return;
+  }
   entrance();
   try {
     const saved = JSON.parse(read(storage) || "null");

@@ -3,7 +3,7 @@ import type {
   RevealAward,
   RevealFrame,
   RevealTitle,
-} from "../shared/draw.js";
+} from "./draw.js";
 
 export interface DrawOption {
   id: string;
@@ -81,4 +81,32 @@ export function prepareReveal(
     });
   add("truth", [publicTitle(truth)], awards, 4500);
   return beats;
+}
+
+export const normalizeCaption = (s: string) =>
+  s
+    .toLocaleLowerCase("ru")
+    .replace(/ё/g, "е")
+    .replace(/[^\p{L}\p{N}]/gu, "");
+
+export function applyRevealFrame(
+  frame: RevealFrame,
+  members: Map<string, DrawPlayer>,
+  artist: string,
+) {
+  for (const award of frame.awards) {
+    const p = members.get(award.player)!;
+    p.points += award.amount;
+    if (award.reason === "fooled") p.fooled += frame.titles[0].voters.length;
+    if (award.reason === "guessed") p.guesses++;
+  }
+  if (frame.kind !== "suspense" && frame.kind !== "truth") {
+    for (const o of frame.titles) members.get(o.author!)!.likes += o.likes;
+  }
+  if (frame.kind === "truth") {
+    const guessed = new Set(frame.titles[0].voters);
+    for (const [id, p] of members) {
+      if (id !== artist) p.streak = guessed.has(id) ? p.streak + 1 : 0;
+    }
+  }
 }

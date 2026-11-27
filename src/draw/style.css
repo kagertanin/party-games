@@ -566,3 +566,13 @@
     border: 1px solid CanvasText;
   }
 }
+
+.draw-app .draw-demo-tools { position:relative; z-index:11; align-items:center; }
+.draw-demo-tools .survey-view-choice { gap: .45rem; white-space: nowrap; }
+.draw-demo-tools .survey-button { min-height: 2.3rem; padding: .35rem .75rem; font-size: .875rem; }
+.draw-demo-tools:not([hidden]) + .draw-exit { margin-left: 0; }
+@media (max-width: 760px) {
+  .draw-app .survey-header:has(.draw-demo-tools:not([hidden])) { flex-wrap: wrap; }
+  .draw-app .draw-demo-tools { order: 1; flex: 1 0 100%; margin: .2rem 0 0; gap: .45rem; }
+  .draw-demo-tools:not([hidden]) + .draw-exit { margin-left: auto; }
+}

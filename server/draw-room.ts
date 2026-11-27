@@ -1,3 +1,9 @@
+import {
+  normalizeCaption,
+  prepareReveal,
+  applyRevealFrame,
+  type DrawOption as Option,
+} from "../shared/draw-reveal.js";
 import { Room, type Client } from "@colyseus/core";
 import { randomBytes, randomInt, randomUUID } from "node:crypto";
 import {
@@ -21,12 +27,6 @@ function shuffle<T>(values: T[]) {
   }
   return result;
 }
-const normalize = (s: string) =>
-  s
-    .toLocaleLowerCase("ru")
-    .replace(/ё/g, "е")
-    .replace(/[^\p{L}\p{N}]/gu, "");
-import { prepareReveal, type DrawOption as Option } from "./draw-reveal.js";
 type Picture = { prompt: string; slot: ReturnType<typeof pictureSlot> };
 export class DrawRoom extends Room {
   private phase: Phase = "lobby";
@@ -230,14 +230,14 @@ export class DrawRoom extends Room {
       !this.captions.has(id)
     ) {
       const text = typeof msg.text === "string" ? msg.text.trim() : "";
-      const key = normalize(text);
+      const key = normalizeCaption(text);
       if (!key || text.length > 80)
         throw Error("Введите подпись до 80 знаков.");
       if (
         [
           this.pictures.get(this.artist)!.prompt,
           ...this.captions.values(),
-        ].some((s) => normalize(s) === key)
+        ].some((s) => normalizeCaption(s) === key)
       )
         throw Error("Такой вариант уже есть. Попробуйте другую подпись.");
       this.captions.set(id, text);
@@ -341,22 +341,7 @@ export class DrawRoom extends Room {
     this.startedAt = Date.now();
     this.deadline =
       this.startedAt + duration + (this.beat === 0 ? DRAW_INTRO : 0);
-    for (const award of frame.awards) {
-      const p = this.members.get(award.player)!;
-      p.points += award.amount;
-      if (award.reason === "fooled") p.fooled += frame.titles[0].voters.length;
-      if (award.reason === "guessed") p.guesses++;
-    }
-    if (frame.kind !== "suspense" && frame.kind !== "truth") {
-      for (const o of frame.titles)
-        this.members.get(o.author!)!.likes += o.likes;
-    }
-    if (frame.kind === "truth") {
-      const guessed = new Set(frame.titles[0].voters);
-      for (const [id, p] of this.members) {
-        if (id !== this.artist) p.streak = guessed.has(id) ? p.streak + 1 : 0;
-      }
-    }
+    applyRevealFrame(frame, this.members, this.artist);
   }
   private sendView(client: Client) {
     const you = client.sessionId;

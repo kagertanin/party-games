@@ -1,8 +1,38 @@
 type Point = [number, number];
-type Stroke = { color: string; width: number; erase: boolean; points: Point[] };
+export type Stroke = {
+  color: string;
+  width: number;
+  erase: boolean;
+  points: Point[];
+};
+function draw(
+  ctx: CanvasRenderingContext2D,
+  s: Stroke,
+  from: Point,
+  to: Point,
+) {
+  ctx.globalCompositeOperation = s.erase ? "destination-out" : "source-over";
+  ctx.strokeStyle = ctx.fillStyle = s.color;
+  ctx.lineCap = ctx.lineJoin = "round";
+  ctx.lineWidth = s.width;
+  ctx.beginPath();
+  if (from[0] === to[0] && from[1] === to[1]) {
+    ctx.arc(to[0], to[1], s.width / 2, 0, Math.PI * 2);
+    ctx.fill();
+  } else {
+    ctx.moveTo(...from);
+    ctx.lineTo(...to);
+    ctx.stroke();
+  }
+}
+
+export function paintStrokes(ctx: CanvasRenderingContext2D, strokes: Stroke[]) {
+  for (const s of strokes)
+    s.points.forEach((p, i) => draw(ctx, s, s.points[Math.max(0, i - 1)], p));
+}
 export function mountCanvas(
   root: HTMLElement,
-  uploadUrl: string,
+  target: string | { strokes: Stroke[] },
   complete: () => void,
   problem: (s: string) => void,
 ) {
@@ -51,10 +81,11 @@ export function mountCanvas(
   const observer = new ResizeObserver(updateTip);
   observer.observe(canvas);
   width.oninput = updateTip;
-  const key = "draw.draft." + uploadUrl.split("/").pop();
-  let strokes: Stroke[] = [];
+  const key =
+    typeof target === "string" ? "draw.draft." + target.split("/").pop() : null;
+  let strokes: Stroke[] = typeof target === "string" ? [] : target.strokes;
   try {
-    strokes = JSON.parse(sessionStorage.getItem(key) ?? "[]");
+    if (key) strokes = JSON.parse(sessionStorage.getItem(key) ?? "[]");
   } catch {
     /* Empty draft. */
   }
@@ -64,30 +95,14 @@ export function mountCanvas(
   let busy = false;
   let ended = false;
   let closing = false;
-  function draw(s: Stroke, from: Point, to: Point) {
-    ctx.globalCompositeOperation = s.erase ? "destination-out" : "source-over";
-    ctx.strokeStyle = ctx.fillStyle = s.color;
-    ctx.lineCap = ctx.lineJoin = "round";
-    ctx.lineWidth = s.width;
-    ctx.beginPath();
-    if (from[0] === to[0] && from[1] === to[1]) {
-      ctx.arc(to[0], to[1], s.width / 2, 0, Math.PI * 2);
-      ctx.fill();
-    } else {
-      ctx.moveTo(...from);
-      ctx.lineTo(...to);
-      ctx.stroke();
-    }
-  }
   function repaint() {
     ctx.clearRect(0, 0, 640, 480);
-    for (const s of strokes)
-      s.points.forEach((p, i) => draw(s, s.points[Math.max(0, i - 1)], p));
+    paintStrokes(ctx, strokes);
     undo.disabled = strokes.length === 0;
   }
   function saveDraft() {
     try {
-      sessionStorage.setItem(key, JSON.stringify(strokes));
+      if (key) sessionStorage.setItem(key, JSON.stringify(strokes));
     } catch {
       /* Server also receives snapshots. */
     }
@@ -117,7 +132,7 @@ export function mountCanvas(
       points: [p],
     };
     strokes.push(s);
-    draw(s, p, p);
+    draw(ctx, s, p, p);
     revision++;
     undo.disabled = false;
   };
@@ -128,7 +143,7 @@ export function mountCanvas(
       p = point(e),
       prev = s.points[s.points.length - 1];
     if (p[0] === prev[0] && p[1] === prev[1]) return;
-    draw(s, prev, p);
+    draw(ctx, s, prev, p);
     s.points.push(p);
     revision++;
   };
@@ -165,7 +180,8 @@ export function mountCanvas(
     }
   };
   async function flush() {
-    if (busy || ended || sent === revision) return;
+    if (typeof target !== "string" || busy || ended || sent === revision)
+      return;
     busy = true;
     const version = revision;
     try {
@@ -173,7 +189,7 @@ export function mountCanvas(
         canvas.toBlob(resolve, "image/png"),
       );
       if (!blob) throw Error();
-      const response = await fetch(uploadUrl + "?v=" + version, {
+      const response = await fetch(target + "?v=" + version, {
         method: "POST",
         body: blob,
         signal: AbortSignal.timeout(8000),
@@ -197,25 +213,27 @@ export function mountCanvas(
     finish.disabled = true;
     finish.textContent = "Отправляем…";
     stopStroke();
-    if (sent === revision) complete();
+    if (!key || sent === revision) complete();
     else void flush();
   }
   repaint();
   finish.onclick = submit;
   window.addEventListener("keydown", keydown);
-  const timer = setInterval(() => void flush(), 10000);
-  const retryFinal = setInterval(() => {
-    if (closing) void flush();
-  }, 800);
+  const timer = key && setInterval(() => void flush(), 10000);
+  const retryFinal =
+    key &&
+    setInterval(() => {
+      if (closing) void flush();
+    }, 800);
   return {
     submit,
     dispose(clear: boolean) {
       ended = true;
       observer.disconnect();
-      clearInterval(timer);
-      clearInterval(retryFinal);
+      if (timer) clearInterval(timer);
+      if (retryFinal) clearInterval(retryFinal);
       window.removeEventListener("keydown", keydown);
-      if (clear) {
+      if (key && clear) {
         try {
           sessionStorage.removeItem(key);
         } catch {
