@@ -64,8 +64,15 @@
   transition: background-color .15s ease, box-shadow .15s ease;
 }
 
-.survey-result-slot[data-place="2"] .survey-result-patch { min-height: clamp(8rem, 16.5vw, 12.8rem); }
-.survey-result-slot[data-place="1"] .survey-result-patch { min-height: clamp(9.2rem, 19vw, 14.7rem); }
+.survey-result-slot[data-place="2"] .survey-result-patch {
+  min-height: clamp(8rem, 16.5vw, 12.8rem);
+  padding-block-start: clamp(.5rem, 2.8vw, 2.25rem);
+}
+
+.survey-result-slot[data-place="1"] .survey-result-patch {
+  min-height: clamp(9.2rem, 19vw, 14.7rem);
+  padding-block-start: clamp(.6rem, 4vw, 3.25rem);
+}
 
 .survey-result-patch::after,
 .survey-award-trigger::after,
