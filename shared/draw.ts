@@ -29,12 +29,13 @@ export interface Choice {
   mine: boolean;
 }
 export interface RevealTitle {
+  id: string;
   text: string;
   voters: string[];
-  likes: number;
   author?: string;
 }
 export interface RevealAward {
+  voter: string;
   player: string;
   amount: number;
   reason: "fooled" | "guessed" | "artist";
@@ -43,7 +44,7 @@ export interface RevealAward {
 export interface RevealFrame {
   step: number;
   total: number;
-  kind: "opening" | "empty" | "suspense" | "false" | "truth";
+  kind: "opening" | "ballots" | "tally" | "false" | "truth" | "favorites";
   titles: RevealTitle[];
   awards: RevealAward[];
 }
@@ -67,6 +68,7 @@ export interface DrawView {
   artist?: string;
   choices?: Choice[];
   liked?: string[];
+  heartCounts?: Record<string, number>;
   reveal?: RevealFrame;
   revealed?: RevealFrame[];
   votedFor?: string;

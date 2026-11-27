@@ -1,6 +1,8 @@
 import {
   normalizeCaption,
   prepareReveal,
+  setHeart,
+  heartCounts,
   revealedBefore,
   applyRevealFrame,
   type DrawOption as Option,
@@ -244,16 +246,25 @@ export class DrawRoom extends Room {
       this.captions.set(id, text);
       return;
     }
+    if (
+      this.phase === "reveal" &&
+      this.beats[this.beat].frame.kind === "favorites" &&
+      msg.type === "like"
+    ) {
+      setHeart(
+        this.choices,
+        this.hearts,
+        this.members,
+        id,
+        msg.choice,
+        msg.likes,
+      );
+      return;
+    }
     if (this.phase !== "vote") return;
     const option = this.choices.find(
       (o) => o.id === msg.choice && o.author !== id,
     );
-    if (msg.type === "like" && option) {
-      const likes = this.hearts.get(id) ?? new Set<string>();
-      if (msg.likes === true) likes.add(option.id);
-      else likes.delete(option.id);
-      this.hearts.set(id, likes);
-    }
     if (
       msg.type === "vote" &&
       id !== this.artist &&
@@ -314,12 +325,7 @@ export class DrawRoom extends Room {
         this.setStage("vote");
         break;
       case "vote":
-        this.beats = prepareReveal(
-          this.choices,
-          this.votes,
-          this.hearts,
-          this.members,
-        );
+        this.beats = prepareReveal(this.choices, this.votes, this.members);
         this.beat = 0;
         this.setStage("reveal");
         this.showBeat();
@@ -385,11 +391,14 @@ export class DrawRoom extends Room {
     if (this.phase === "vote") {
       v.choices = this.choices.map(publicOption);
       v.votedFor = this.votes.get(you);
-      v.liked = [...(this.hearts.get(you) ?? [])];
     }
     if (this.phase === "reveal") {
       v.reveal = this.beats[this.beat].frame;
       v.revealed = revealedBefore(this.beats, this.beat);
+      if (v.reveal.kind === "favorites") {
+        v.liked = [...(this.hearts.get(you) ?? [])];
+        v.heartCounts = heartCounts(this.hearts);
+      }
     }
     client.send("view", v);
   }

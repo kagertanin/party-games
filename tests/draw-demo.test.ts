@@ -32,9 +32,18 @@ test("solo player draws, captions, likes and votes without waiting for other pla
   game.act("vote", { choice: own.id });
   assert.equal(game.phase, "vote");
   game.act("like", { choice: truth.id, likes: true });
-  assert.deepEqual(game.snapshot().liked, [truth.id]);
+  assert.equal(game.snapshot().liked, undefined);
   game.act("vote", { choice: truth.id });
   assert.equal(game.phase, "reveal");
+  while (game.snapshot().reveal?.kind !== "favorites") game.next();
+  assert.equal(game.deadline - game.snapshot().startedAt, 10000);
+  const before = game.snapshot().heartCounts?.[truth.id] ?? 0;
+  for (const likes of [true, true, false, true])
+    game.act("like", { choice: truth.id, likes });
+  assert.deepEqual(game.snapshot().liked, [truth.id]);
+  assert.equal(game.snapshot().heartCounts?.[truth.id], before + 1);
+  game.act("like", { choice: own.id, likes: true });
+  assert.deepEqual(game.snapshot().liked, [truth.id]);
   game.finish();
   assert.equal(game.phase, "results");
   assert.ok(game.players[0].guesses >= 1);
@@ -82,8 +91,9 @@ test("jumping to the finale settles every award once from every stage, including
     "drawing",
     "captions",
     "vote",
-    "empty",
-    "suspense",
+    "ballots",
+    "tally",
+    "favorites",
     "false",
     "truth",
   ]) {
@@ -139,28 +149,44 @@ test("a popular bluff closes the cumulative board and no future answer leaks", (
     game.act("vote", { choice: pick.id });
   }
   assert.equal(game.snapshot().reveal!.kind, "opening");
-  const seen: number[] = [];
+  const steps: number[] = [];
+  const scores: number[] = [];
   while (game.phase === "reveal") {
     const { reveal, revealed } = game.snapshot();
-    assert.deepEqual(
-      revealed!.map((f) => f.step),
-      seen,
-    );
-    if (reveal!.kind !== "opening" && reveal!.kind !== "suspense") {
-      assert.equal(reveal!.titles.length, 1);
-      const prior = revealed!.at(-1);
-      if (prior)
+    const f = reveal!;
+    if (f.kind === "ballots") {
+      assert.equal(f.titles[0].author, undefined);
+      assert.equal(f.awards.length, 0);
+      assert.equal(
+        game.players.reduce((sum, p) => sum + p.points, 0),
+        0,
+      );
+      assert.deepEqual(
+        revealed!.map((r) => r.step),
+        steps,
+      );
+      steps.push(f.step);
+    }
+    if (f.kind === "truth" || f.kind === "false") {
+      assert.equal(steps.length, 4);
+      scores.push(f.step);
+      assert.ok(f.titles[0].author);
+      if (f.step === 3) {
+        assert.equal(f.kind, "false");
+        assert.equal(f.awards.length, 2);
         assert.ok(
-          prior.titles[0].voters.length <= reveal!.titles[0].voters.length,
+          f.awards.every((a) => a.player === voters[0].id && a.amount === 500),
         );
-      seen.push(reveal!.step);
-      if (seen.length === voters.length + 1) {
-        assert.equal(reveal!.kind, "false");
-        assert.equal(reveal!.titles[0].voters.length, 2);
-        assert.ok(revealed!.some((f) => f.kind === "truth"));
+        assert.deepEqual(
+          f.awards.map((a) => a.voter),
+          f.titles[0].voters,
+        );
       }
     }
+    if (f.kind === "favorites")
+      assert.ok(revealed!.every((r) => r.titles[0].author));
     game.next();
   }
-  assert.equal(seen.length, 4);
+  assert.deepEqual(steps, [0, 1, 2, 3]);
+  assert.deepEqual(scores, steps);
 });

@@ -9,6 +9,8 @@ import {
   applyRevealFrame,
   normalizeCaption,
   prepareReveal,
+  setHeart,
+  heartCounts,
   revealedBefore,
   type DrawOption,
 } from "../../shared/draw-reveal";
@@ -121,15 +123,16 @@ export class DrawDemo {
           p.id,
           (i === this.turn % this.guessers.length ? favorite : truth).id,
         );
-        if (!this.hearts.has(p.id))
-          this.hearts.set(p.id, new Set([favorite.id]));
       }
     }
-    if (!this.hearts.has(this.artist))
-      this.hearts.set(
-        this.artist,
-        new Set([this.choices.find((o) => !o.truth)!.id]),
-      );
+  }
+  private simulateFavorites() {
+    for (const [i, p] of this.players.entries()) {
+      if (p.id === this.you) continue;
+      const options = this.choices.filter((o) => o.author !== p.id);
+      const pick = options[(i + this.turn) % options.length];
+      setHeart(this.choices, this.hearts, this.members, p.id, pick.id, true);
+    }
   }
   private revealBeat() {
     const { frame, duration } = this.beats[this.beat];
@@ -137,6 +140,7 @@ export class DrawDemo {
     this.deadline =
       this.startedAt + duration + (this.beat === 0 ? drawIntro("reveal") : 0);
     applyRevealFrame(frame, this.members, this.artist);
+    if (frame.kind === "favorites") this.simulateFavorites();
   }
   next() {
     switch (this.phase) {
@@ -153,12 +157,7 @@ export class DrawDemo {
         break;
       case "vote":
         this.simulateVotes();
-        this.beats = prepareReveal(
-          this.choices,
-          this.votes,
-          this.hearts,
-          this.members,
-        );
+        this.beats = prepareReveal(this.choices, this.votes, this.members);
         this.beat = 0;
         this.enter("reveal");
         this.revealBeat();
@@ -206,17 +205,25 @@ export class DrawDemo {
         this.captions.size === this.guessers.length
       )
         this.next();
+    } else if (
+      this.phase === "reveal" &&
+      this.beats[this.beat].frame.kind === "favorites" &&
+      type === "like"
+    ) {
+      setHeart(
+        this.choices,
+        this.hearts,
+        this.members,
+        id,
+        data.choice,
+        data.likes,
+      );
     } else if (this.phase === "vote") {
       const opt = this.choices.find(
         (o) => o.id === data.choice && o.author !== id,
       );
       if (!opt) return;
-      if (type === "like") {
-        const set = this.hearts.get(id) ?? new Set<string>();
-        if (data.likes) set.add(opt.id);
-        else set.delete(opt.id);
-        this.hearts.set(id, set);
-      } else if (type === "vote" && id !== this.artist && !this.votes.has(id)) {
+      if (type === "vote" && id !== this.artist && !this.votes.has(id)) {
         this.votes.set(id, opt.id);
         if (
           this.perspective === "auto" ||
@@ -265,11 +272,14 @@ export class DrawDemo {
           mine: o.author === you,
         }));
         v.votedFor = this.votes.get(you);
-        v.liked = [...(this.hearts.get(you) ?? [])];
       }
       if (phase === "reveal") {
         v.reveal = this.beats[this.beat].frame;
         v.revealed = revealedBefore(this.beats, this.beat);
+        if (v.reveal.kind === "favorites") {
+          v.liked = [...(this.hearts.get(you) ?? [])];
+          v.heartCounts = heartCounts(this.hearts);
+        }
       }
     }
     return v;

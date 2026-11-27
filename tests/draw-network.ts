@@ -121,14 +121,7 @@ try {
       choice: fake.id,
       likes: true,
     });
-    await until(
-      () =>
-        view(rooms.find((r) => r.sessionId === artist)!).liked?.includes(
-          fake.id,
-        ) === true,
-      "like",
-    );
-    expected.get(voters[0].sessionId)!.likes++;
+    // Early hearts must not count; the same choice is liked during the review window below.
     for (const [n, r] of voters.entries()) {
       const p = expected.get(r.sessionId)!;
       if (n === 1) {
@@ -149,30 +142,50 @@ try {
       ),
     );
     await until(
-      () => rooms.every((r) => view(r).reveal?.kind === "suspense"),
-      "suspense",
-      25000,
+      () => rooms.every((r) => view(r).reveal?.kind === "ballots"),
+      "ballots",
     );
-    const history = view(rooms[0]).revealed!;
-    assert.equal(history.length, 10);
     assert.ok(
-      history.every(
-        (frame) => frame.kind === "empty" && frame.titles.length === 1,
+      rooms.every(
+        (r) =>
+          view(r).reveal!.titles[0].author === undefined &&
+          !view(r).reveal!.awards.length,
       ),
     );
-    for (const r of rooms) assert.deepEqual(view(r).revealed, history);
+    await until(
+      () => rooms.every((r) => view(r).reveal?.kind === "tally"),
+      "all votes displayed",
+      65000,
+    );
+    const board = view(rooms[0]).revealed!;
+    assert.equal(board.length, 12);
+    assert.ok(
+      board.every(
+        (f) => f.kind === "ballots" && f.titles[0].author === undefined,
+      ),
+    );
+    for (const r of rooms) assert.deepEqual(view(r).revealed, board);
     if (i === 0) {
       await reconnect(5);
       await until(
         () => Boolean(view(rooms[5])?.revealed),
         "reconnect during reveal",
       );
-      assert.deepEqual(view(rooms[5]).revealed, history);
+      assert.deepEqual(view(rooms[5]).revealed, board);
     }
-    assert.equal(view(rooms[0]).reveal!.titles[0].author, undefined);
-    await until(() => view(rooms[0]).reveal?.kind === "false", "bluff");
-    assert.equal(view(rooms[0]).reveal!.awards[0].amount, 500);
-    await until(() => view(rooms[0]).reveal?.kind === "truth", "truth last");
+    await until(
+      () => rooms.every((r) => view(r).reveal?.kind === "favorites"),
+      "all awards settled",
+      55000,
+    );
+    const author = rooms.find((r) => r.sessionId === artist)!;
+    act(author, "like", { choice: fake.id, likes: true });
+    act(author, "like", { choice: fake.id, likes: true });
+    await until(
+      () => rooms.every((r) => view(r).heartCounts?.[fake.id] === 1),
+      "shared hearts",
+    );
+    expected.get(voters[0].sessionId)!.likes++;
     for (const p of view(rooms[0]).players) {
       assert.equal(p.points, expected.get(p.id)!.points);
       assert.equal(p.likes, expected.get(p.id)!.likes);

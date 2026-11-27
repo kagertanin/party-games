@@ -18,81 +18,112 @@ interface Beat {
 export function prepareReveal(
   choices: DrawOption[],
   votes: Map<string, string>,
-  hearts: Map<string, Set<string>>,
   players: Map<string, DrawPlayer>,
 ): Beat[] {
-  const titles = choices.map((choice) => ({
-    ...choice,
-    voters: [...votes]
-      .filter(([, pick]) => pick === choice.id)
-      .map(([id]) => id),
-    likes: [...hearts.values()].filter((liked) => liked.has(choice.id)).length,
-  }));
-  // The real phrase wins ties, but even a popular bluff can close the round.
-  titles.sort(
-    (a, b) =>
-      a.voters.length - b.voters.length || Number(a.truth) - Number(b.truth),
-  );
-  const total = titles.length;
-  const beats: Beat[] = [
-    {
-      frame: { step: -1, total, kind: "opening", titles: [], awards: [] },
-      duration: 1100,
-    },
-  ];
-  for (const [step, o] of titles.entries()) {
-    const title: RevealTitle = {
-      text: o.text,
-      voters: o.voters,
-      likes: o.likes,
-      author: o.author,
-    };
-    let awards: RevealAward[] = [];
-    const kind = o.truth ? "truth" : o.voters.length ? "false" : "empty";
-    if (o.voters.length && step < total - 1) {
-      beats.push({
-        frame: {
-          step,
-          total,
-          kind: "suspense",
-          titles: [{ text: o.text, voters: o.voters, likes: o.likes }],
-          awards: [],
-        },
-        duration: 2300,
-      });
-    }
-    if (o.truth) {
-      awards = o.voters.map((player) => {
-        const bonus = 100 * players.get(player)!.streak;
-        return { player, amount: 1000 + bonus, reason: "guessed", bonus };
-      });
-      if (o.voters.length)
-        awards.push({
-          player: o.author,
-          amount: 1000 * o.voters.length,
-          reason: "artist",
-        });
-    } else if (o.voters.length) {
-      awards.push({
-        player: o.author,
-        amount: 500 * o.voters.length,
-        reason: "fooled",
-      });
-    }
+  const sorted = choices
+    .map((choice) => ({
+      choice,
+      voters: [...votes]
+        .filter(([, pick]) => pick === choice.id)
+        .map(([id]) => id),
+    }))
+    .sort(
+      (a, b) =>
+        a.voters.length - b.voters.length ||
+        Number(a.choice.truth) - Number(b.choice.truth),
+    );
+  const total = sorted.length;
+  const beats: Beat[] = [];
+  function pause(kind: "opening" | "tally" | "favorites", duration: number) {
     beats.push({
-      frame: { step, total, kind, titles: [title], awards },
-      duration: step === total - 1 ? 4600 : kind === "empty" ? 1200 : 2450,
+      frame: { step: -1, total, kind, titles: [], awards: [] },
+      duration,
     });
   }
+  pause("opening", 1100);
+  for (const [step, { choice, voters }] of sorted.entries()) {
+    const title = { id: choice.id, text: choice.text, voters };
+    beats.push({
+      frame: { step, total, kind: "ballots", titles: [title], awards: [] },
+      duration: voters.length ? 4600 : 2400,
+    });
+  }
+  pause("tally", 1600);
+  for (const [step, { choice, voters }] of sorted.entries()) {
+    const awards: RevealAward[] = [];
+    for (const voter of voters) {
+      if (choice.truth) {
+        const bonus = 100 * players.get(voter)!.streak;
+        awards.push(
+          {
+            voter,
+            player: voter,
+            amount: 1000 + bonus,
+            reason: "guessed",
+            bonus,
+          },
+          { voter, player: choice.author, amount: 1000, reason: "artist" },
+        );
+      } else {
+        awards.push({
+          voter,
+          player: choice.author,
+          amount: 500,
+          reason: "fooled",
+        });
+      }
+    }
+    const title: RevealTitle = {
+      id: choice.id,
+      text: choice.text,
+      voters,
+      author: choice.author,
+    };
+    beats.push({
+      frame: {
+        step,
+        total,
+        kind: choice.truth ? "truth" : "false",
+        titles: [title],
+        awards,
+      },
+      duration: awards.length ? 4000 : 1800,
+    });
+  }
+  pause("favorites", 10000);
   return beats;
 }
 
-// Send only settled answers. A reconnect can rebuild the board without revealing future answers.
+// Only send the last public state of each answer, including after a reconnect.
 export function revealedBefore(beats: Beat[], index: number) {
-  return beats
-    .slice(0, index)
-    .map((beat) => beat.frame)
-    .filter((frame) => frame.kind !== "opening" && frame.kind !== "suspense");
+  const board = new Map<number, RevealFrame>();
+  for (const { frame } of beats.slice(0, index))
+    if (frame.step >= 0) board.set(frame.step, frame);
+  return [...board.values()];
+}
+
+export function setHeart(
+  choices: DrawOption[],
+  hearts: Map<string, Set<string>>,
+  members: Map<string, DrawPlayer>,
+  voter: string,
+  optionId: unknown,
+  liked: unknown,
+) {
+  const option = choices.find((o) => o.id === optionId);
+  if (!option || option.author === voter || typeof liked !== "boolean") return;
+  const set = hearts.get(voter) ?? new Set<string>();
+  if (set.has(option.id) === liked) return;
+  if (liked) set.add(option.id);
+  else set.delete(option.id);
+  hearts.set(voter, set);
+  members.get(option.author)!.likes += liked ? 1 : -1;
+}
+export function heartCounts(hearts: Map<string, Set<string>>) {
+  const counts: Record<string, number> = {};
+  for (const picks of hearts.values())
+    for (const pick of picks) counts[pick] = (counts[pick] ?? 0) + 1;
+  return counts;
 }
 
 export const normalizeCaption = (s: string) =>
@@ -109,11 +140,8 @@ export function applyRevealFrame(
   for (const award of frame.awards) {
     const p = members.get(award.player)!;
     p.points += award.amount;
-    if (award.reason === "fooled") p.fooled += frame.titles[0].voters.length;
+    if (award.reason === "fooled") p.fooled++;
     if (award.reason === "guessed") p.guesses++;
-  }
-  if (frame.kind !== "suspense" && frame.kind !== "truth") {
-    for (const o of frame.titles) members.get(o.author!)!.likes += o.likes;
   }
   if (frame.kind === "truth") {
     const guessed = new Set(frame.titles[0].voters);

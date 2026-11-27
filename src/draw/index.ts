@@ -10,6 +10,7 @@ import type { DrawDemo } from "./demo";
 import { mountCanvas, paintStrokes } from "./canvas";
 import { escape as esc } from "../rooms/ui";
 import { openDrawForm, lobbyMarkup } from "./rooms";
+import { finale } from "./finale";
 import { mountReveal } from "./reveal";
 import { songbird } from "./art/songbird";
 import logo from "../home-art/logo.webp";
@@ -84,12 +85,10 @@ export function mountDraw(app: HTMLElement) {
   let fastFinale = false;
   const header = app.querySelector<HTMLElement>(".survey-header")!;
   let removing = "";
-  let updateReveal: ((v: DrawView) => void) | undefined;
+  let recap: ReturnType<typeof mountReveal> | undefined;
   const notify = (s: string) => {
     app.querySelector(".draw-notice")!.textContent = s;
   };
-  const who = (id: string) =>
-    esc(view?.players.find((p) => p.id === id)?.name ?? "Игрок");
   const demoTools = app.querySelector<HTMLElement>("[data-demo-tools]")!;
   const perspective =
     demoTools.querySelector<HTMLSelectElement>("[data-perspective]")!;
@@ -374,7 +373,8 @@ export function mountDraw(app: HTMLElement) {
 
       pageKey = key;
       stage.onclick = null;
-      updateReveal = undefined;
+      recap?.dispose();
+      recap = undefined;
       if (v.phase === "lobby") {
         stage.innerHTML = lobbyMarkup(v, removing);
         stage.onclick = async (event) => {
@@ -453,7 +453,7 @@ export function mountDraw(app: HTMLElement) {
           items
             .map(
               (o) =>
-                `<div class="ballot-line"><button class="ballot-phrase" data-choice="${esc(o.id)}">${esc(o.text)}</button><button class="ballot-heart" data-heart="${esc(o.id)}" aria-label="Респект: ${esc(o.text)}">♡</button></div>`,
+                `<div class="ballot-line"><button class="ballot-phrase" data-choice="${esc(o.id)}">${esc(o.text)}</button></div>`,
             )
             .join("");
         const middle = Math.ceil(choices.length / 2);
@@ -468,11 +468,6 @@ export function mountDraw(app: HTMLElement) {
             event.target as HTMLElement
           ).closest<HTMLButtonElement>("button");
           if (!button || button.disabled) return;
-          if (button.dataset.heart)
-            act("like", {
-              choice: button.dataset.heart,
-              likes: button.getAttribute("aria-pressed") !== "true",
-            });
           if (button.dataset.choice) {
             stage
               .querySelectorAll<HTMLButtonElement>("[data-choice]")
@@ -481,32 +476,24 @@ export function mountDraw(app: HTMLElement) {
           }
         };
       } else if (v.phase === "reveal") {
-        updateReveal = mountReveal(stage, v, picture(v));
+        recap = mountReveal(stage, v, picture(v), (choice, likes) =>
+          act("like", { choice, likes }),
+        );
       } else if (v.phase === "results") {
-        const ranked = [...v.players].sort((a, b) => b.points - a.points);
-        const award = (prop: "likes" | "guesses" | "fooled", title: string) => {
-          const best = Math.max(...ranked.map((p) => p[prop]));
-          return best
-            ? `<p><b>${title}</b> · ${ranked
-                .filter((p) => p[prop] === best)
-                .map((p) => who(p.id))
-                .join(", ")} (${best})</p>`
-            : "";
-        };
-        stage.innerHTML = `<div class="draw-panel lobby"><h1>Итоги партии</h1><ol class="score-list">${ranked.map((p) => `<li><span>${who(p.id)}</span><b>${p.points}</b></li>`).join("")}</ol>${award("guesses", "Больше всех угадали")}${award("fooled", "Самые убедительные подписи")}${award("likes", "Любимцы компании")}${demo || v.host === v.you ? '<button class="primary" data-again>Ещё партия</button>' : ""}</div>`;
+        stage.innerHTML = finale(v.players, Boolean(demo || v.host === v.you));
         stage
           .querySelector("button")
           ?.addEventListener("click", () => act("again"));
       }
     }
-    if (v.phase === "reveal") updateReveal?.(v);
+    if (v.phase === "reveal") recap?.update(v);
     if (v.phase === "vote") {
       stage.querySelector(".ballot-hint")!.textContent =
         v.you === v.artist
-          ? "Твой рисунок. Отметь сердцем любимые версии."
+          ? "Твой рисунок. Остальные выбирают фразу."
           : v.done
-            ? "Голос принят. Можно отметить любимые версии сердцем."
-            : "Нажми на фразу, чтобы отдать голос. Сердцем можно отметить любимые версии.";
+            ? "Голос принят."
+            : "Нажми на фразу, чтобы отдать голос.";
       for (const o of v.choices ?? []) {
         const b = stage.querySelector<HTMLButtonElement>(
           `[data-choice="${o.id}"]`,
@@ -514,13 +501,6 @@ export function mountDraw(app: HTMLElement) {
         b.disabled = v.you === v.artist || o.mine || v.done;
         b.classList.toggle("is-mine", o.mine);
         b.setAttribute("aria-pressed", String(v.votedFor === o.id));
-        const h = stage.querySelector<HTMLButtonElement>(
-          `[data-heart="${o.id}"]`,
-        )!;
-        const liked = v.liked?.includes(o.id) ?? false;
-        h.disabled = o.mine;
-        h.textContent = liked ? "♥" : "♡";
-        h.setAttribute("aria-pressed", String(liked));
       }
     }
     const progress = stage.querySelector("[data-progress]");
