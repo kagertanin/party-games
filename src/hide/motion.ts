@@ -90,6 +90,7 @@ export class RemoteMotion {
   private samples: Snapshot[] = [];
   private serverTime = 0;
   private localTime = 0;
+  private arrivedAt = 0;
 
   push(snapshot: Snapshot, now: number) {
     const previous = this.samples.at(-1);
@@ -101,6 +102,7 @@ export class RemoteMotion {
     } else if (snapshot.now < previous.now) return;
     if (this.samples.at(-1)?.now === snapshot.now) this.samples.pop();
     this.samples.push(snapshot);
+    this.arrivedAt = now;
     if (this.samples.length > 20) this.samples.shift();
   }
 
@@ -108,10 +110,14 @@ export class RemoteMotion {
     const latest = this.samples.at(-1);
     if (!latest) return 0;
     const elapsed = Math.max(0, now - this.localTime);
-    // Adjust playback speed gently as packets bunch up or arrive late.
-    const lead = latest.now - this.serverTime;
-    const rate = Math.max(0.92, Math.min(1.08, 1 + (lead - BUFFER_MS) / 1000));
-    this.serverTime = Math.min(latest.now, this.serverTime + elapsed * rate);
+    // Estimate server time from the newest snapshot's arrival. Never play a
+    // queue of stale snapshots after shader compilation or a background tab.
+    const target = latest.now + Math.max(0, now - this.arrivedAt) - BUFFER_MS;
+    const advance = this.serverTime + elapsed;
+    const drift = target - advance;
+    const adjustment = Math.max(-0.08 * elapsed, Math.min(0.08 * elapsed, drift));
+    const next = drift > 100 ? target : advance + adjustment;
+    this.serverTime = Math.max(this.serverTime, Math.min(latest.now, next));
     this.localTime = now;
     return this.serverTime;
   }

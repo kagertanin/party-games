@@ -121,3 +121,20 @@ test("holding WASD against a boundary does not alternate between two camera posi
     close(motion.pose(forward).z, start.z);
   }
 });
+
+test("a burst of old snapshots after a stalled tab does not add a second of playback lag", () => {
+  const remote = new RemoteMotion();
+  const p = player();
+  const start = 8000;
+  remote.push(snapshot(p, start), 0);
+  remote.at(1000);
+  // Main thread rendered before socket callbacks drained a 900 ms backlog.
+  for (let n = 1; n <= 9; n++) {
+    p.x = n * 0.46;
+    remote.push(snapshot(p, start + 100 * n), 1000);
+  }
+  const time = remote.at(1010);
+  assert.ok(time >= start + 900 - 125);
+  const shown = remote.pose(p, time);
+  assert.ok(p.x - shown.x < 0.6);
+});
