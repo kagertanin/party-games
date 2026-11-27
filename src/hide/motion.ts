@@ -66,7 +66,16 @@ export class LocalMotion {
 
   pose(input: Input) {
     const pose = { ...this.player };
-    walk(pose, this.partialInput ?? input, this.fraction);
+    if (this.partialInput) {
+      // Blend toward the collision-tested end of this step. A shorter
+      // collision probe could appear to enter a wall, then snap back.
+      walk(pose, this.partialInput, STEP_SECONDS);
+      const blend = this.fraction / STEP_SECONDS;
+      pose.x = this.player.x + (pose.x - this.player.x) * blend;
+      pose.z = this.player.z + (pose.z - this.player.z) * blend;
+    } else {
+      walk(pose, input, 0);
+    }
     pose.x += this.offsetX;
     pose.z += this.offsetZ;
     return pose;

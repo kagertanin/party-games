@@ -112,3 +112,12 @@ test("releasing WASD partway through a tick at 144 Hz never moves the camera bac
   }
   close(lastZ, start.z - 2 * STEP_SECONDS * 4.6);
 });
+
+test("holding WASD against a boundary does not alternate between two camera positions", () => {
+  const start = { ...player(), z: -43.96 };
+  const motion = new LocalMotion(start);
+  for (let frame = 0; frame < 60; frame++) {
+    motion.advance(forward, 1 / 144);
+    close(motion.pose(forward).z, start.z);
+  }
+});
