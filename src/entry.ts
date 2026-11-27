@@ -7,6 +7,9 @@ async function loadGame() {
       document.title = "Рисовач · И.Г.Р.Ы.";
       const { mountDraw } = await import("./draw");
       mountDraw(app);
+    } else if (params.get("game") === "hide") {
+      document.title = "Прятки · Party Games";
+      (await import("./hide/client")).mount(app);
     } else if (params.get("game") === "survey") {
       document.title = "Сто к одному · Party Games";
       const { mountSurveyDemo } = await import("./survey-entry");

@@ -1,0 +1,165 @@
+@import "@fontsource-variable/rubik";
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  font:
+    16px "Rubik Variable",
+    system-ui,
+    sans-serif;
+  color: #203337;
+  background: #173637;
+}
+.hide-game {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: radial-gradient(ellipse at 65% 15%, #427b70, #142c32 76%);
+}
+.hide-game canvas {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+  visibility: hidden;
+}
+.hide-panel {
+  position: relative;
+  width: min(92vw, 480px);
+  max-height: 94dvh;
+  overflow: auto;
+  padding: clamp(22px, 5vw, 40px);
+  background: #f5f2e7;
+  border-radius: 18px;
+  box-shadow: 0 16px 80px #071c2355;
+}
+.hide-panel h1 {
+  font-size: clamp(32px, 5vw, 50px);
+  margin: 0.35em 0;
+  letter-spacing: -0.04em;
+}
+.hide-panel p {
+  line-height: 1.5;
+}
+.hide-panel a {
+  color: #285e59;
+}
+.hide-panel input,
+.hide-game button {
+  font: inherit;
+  padding: 12px 16px;
+  border-radius: 9px;
+  border: 0;
+}
+.hide-panel input {
+  display: block;
+  margin: 8px 0 16px;
+  width: 100%;
+  border: 1px solid #91aaa4;
+}
+.hide-game button {
+  background: #215e56;
+  color: white;
+  cursor: pointer;
+}
+.hide-game button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.hide-panel ul {
+  padding: 0;
+  list-style: none;
+}
+.hide-panel li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  border-bottom: 1px solid #cbd6ca;
+  padding: 5px 0;
+}
+.hide-panel li button {
+  background: #dce6d9;
+  color: #25463c;
+  padding: 7px;
+}
+.hide-panel small {
+  display: block;
+  margin-top: 10px;
+}
+.hide-game output,
+.hide-hud {
+  position: absolute;
+  color: white;
+  background: #112728df;
+  padding: 10px 15px;
+  border-radius: 9px;
+  pointer-events: none;
+}
+.hide-game output {
+  bottom: 20%;
+  z-index: 4;
+}
+.hide-game output:empty {
+  display: none;
+}
+.hide-hud,
+.hide-aim,
+.hide-touch {
+  display: none;
+}
+.hide-game[data-play="true"] canvas {
+  visibility: visible;
+}
+.hide-game[data-play="true"] .hide-hud {
+  display: block;
+  left: 16px;
+  top: 16px;
+  white-space: pre-wrap;
+}
+.hide-hud:after {
+  content: attr(data-hint);
+  display: block;
+  font-size: 13px;
+  margin-top: 5px;
+}
+.hide-game[data-play="true"] .hide-aim {
+  display: block;
+  position: absolute;
+  width: 6px;
+  height: 6px;
+  background: white;
+  border: 1px solid #17252b;
+  border-radius: 50%;
+  pointer-events: none;
+}
+.hide-touch {
+  pointer-events: none;
+  position: absolute;
+  inset: auto 18px 22px;
+  justify-content: space-between;
+  align-items: center;
+}
+.hide-touch > * {
+  pointer-events: auto;
+  touch-action: none;
+}
+.stick {
+  width: 90px;
+  height: 90px;
+  border-radius: 50%;
+  border: 2px solid #fffc;
+  background: #162b3188;
+  color: white;
+  display: grid;
+  place-items: center;
+  font-size: 38px;
+  user-select: none;
+}
+@media (pointer: coarse) {
+  .hide-game[data-play="true"] .hide-touch {
+    display: flex;
+  }
+}
