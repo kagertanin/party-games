@@ -24,6 +24,11 @@ let buffer: AudioBuffer | undefined;
 let loading: Promise<void> | undefined;
 const voices = new Set<AudioBufferSourceNode>();
 
+// Spatial game effects share this context and its master volume with the interface.
+export function soundOutput() {
+  return context && gain ? { context, gain } : undefined;
+}
+
 function updateGain() {
   if (gain && context) gain.gain.setTargetAtTime((getVolume() / 100) ** 1.4, context.currentTime, .005);
   if (settings.muted) for (const voice of voices) voice.stop();

@@ -1,6 +1,14 @@
-Brightline Offices (ph_office), original map by mg-prop-hunt.
-https://github.com/zees-games/mg-prop-hunt-maps
-Office model catalogue and rebuilt prop models from Zee's Prop Hunt.
-https://github.com/zees-games/mg-prop-hunt
+Original maps from Zee's Prop Hunt map pack (MIT):
+Brightline Offices (ph_office), Willow Lane (ph_house),
+Maple Grove School (ph_school), and Pinecrest Woods (ph_woods).
+https://github.com/zees-games/mg-prop-hunt-maps/tree/1a7f42446680e1df3657cdf3387536b16c47c8af
+
+Prop catalogue and rebuilt models from Zee's Prop Hunt (MIT).
+https://github.com/zees-games/mg-prop-hunt/tree/711788aaf66711640f7d6099d06dfd1b76654c6e
+
 Original Furniture, Nature, Survival and Food kits by Kenney (CC0).
-The adjacent license files contain the original notices.
+https://kenney.nl/
+
+The adjacent license files contain the original notices. Browser bundles
+contain the models used by each map. Kenney palette textures on selected
+models were baked into vertex colours.

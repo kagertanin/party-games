@@ -5,7 +5,7 @@ import { matchMaker } from "@colyseus/core";
 import { Client, type Room } from "colyseus.js";
 import { startServer } from "../server/index.js";
 import { defaultHideSettings } from "../shared/hide/settings.js";
-import { eye, models, office, target, type Snapshot } from "../shared/hide/world.js";
+import { eye, models, office, target, type Snapshot } from "./fixtures/hide-office.js";
 import type { Shot } from "../shared/hide/shot.js";
 
 test("hunters keep their lives when shooting scenery and lose one for a copyable prop", { timeout: 10000 }, async (t) => {

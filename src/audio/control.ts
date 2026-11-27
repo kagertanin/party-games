@@ -5,7 +5,7 @@ const controls = "a[href],button,select,summary,input[type=button],input[type=su
 const toElement = (target: EventTarget | null) => target instanceof Element ? target : null;
 function activeControl(target: EventTarget | null) {
   const el = toElement(target);
-  if (el?.closest("[inert], :disabled, [aria-disabled=true]")) return null;
+  if (el?.closest("[inert], :disabled, [aria-disabled=true], [data-world-input]")) return null;
   return el?.closest(controls);
 }
 
@@ -69,7 +69,7 @@ export function mountSoundControl() {
   }, true);
   const tap = (target: EventTarget | null) => {
     const el = toElement(target);
-    if (!el || el.closest(".fabric-sound, :disabled, [aria-disabled=true], [inert]")) return;
+    if (!el || el.closest(".fabric-sound, :disabled, [aria-disabled=true], [inert], [data-world-input]")) return;
     playSound(activeControl(el) ? "press" : "background");
   };
   document.addEventListener("pointerdown", e => {

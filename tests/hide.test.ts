@@ -13,7 +13,7 @@ import {
   eye,
   type Snapshot,
   type Player,
-} from "../shared/hide/world.js";
+} from "./fixtures/hide-office.js";
 
 test("Brightline Offices has all models and a copyable object at the hider entrance", () => {
   for (const obj of office.props) assert.ok(models[obj.id]);

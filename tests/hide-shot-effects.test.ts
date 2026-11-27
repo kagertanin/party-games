@@ -1,14 +1,15 @@
+import { officeWorld } from "./fixtures/hide-office.js";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as T from "three";
 import { FoundEffect, ShotEffects, foundView, pistolArm } from "../src/hide/shots";
 import { revealDuration, type Shot } from "../shared/hide/shot";
-import { target, type Player } from "../shared/hide/world";
+import { target, type Player } from "./fixtures/hide-office.js";
 
 test("the caught bottle on the kitchen table stays in a clear, centered shot", () => {
   const bottle: Player = { id: "bottle", name: "", hunter: false, alive: false, online: true,
     x: 7.7, y: 0.843, z: 11.88, form: "food_soda_bottle", facing: 0, yaw: 0, pitch: -0.285, ammo: 0 };
-  const { position, focus } = foundView(bottle, bottle.yaw);
+  const { position, focus } = foundView(officeWorld, bottle, bottle.yaw);
   const ray = focus.clone().sub(position);
   const distance = ray.length();
   assert.ok(distance > 1);

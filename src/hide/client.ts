@@ -1,9 +1,18 @@
-import type { Shot } from "../../shared/hide/shot";
+import type { Point, Shot } from "../../shared/hide/shot";
 import { Client, type Room } from "colyseus.js";
 import { type Snapshot } from "../../shared/hide/world";
 import { isHideSetting, settingLimits, validSetting, type HideSettings } from "../../shared/hide/settings";
-import { createScene } from "./scene";
+import type { createScene } from "./scene";
+import type { MapId } from "../../shared/hide/maps";
+import { loadWorld } from "./load-map";
 import { escape } from "../rooms/ui";
+import { isMapId, mapNames } from "../../shared/hide/maps";
+import brand from "../home-art/logo.webp";
+import hidePatch from "../home-art/hide.webp";
+import "../base.css";
+import "../survey/online-lobby.css";
+import "../survey/textile.css";
+import "../survey/lobby-textile.css";
 import "./hide.css";
 
 const settingLabels: Record<keyof HideSettings, string> = {
@@ -14,10 +23,18 @@ const settingLabels: Record<keyof HideSettings, string> = {
 const settingFields = (Object.keys(settingLabels) as (keyof HideSettings)[]).map(key =>
   `<label>${settingLabels[key]}<input type="number" required data-setting="${key}" min="1" max="${settingLimits[key]}" step="1"></label>`,
 ).join("");
+const mapOptions = Object.entries(mapNames).map(([id, title]) => `<option value="${id}">${escape(title)}</option>`).join("");
 
 export function mount(app: HTMLElement) {
-  app.innerHTML =
-    '<main class="hide-game"><canvas></canvas><div class="hide-hud"></div><div class="hide-aim"></div><div class="hide-touch"><div class="stick">✥</div><button class="jump" hidden>Прыжок</button><button class="action">Действие</button></div><section class="hide-panel"></section><output></output></main>';
+  document.querySelector('meta[name="theme-color"]')?.setAttribute("content", "#ede7fb");
+  app.innerHTML = `<main class="hide-game survey-app" data-screen="entry">
+    <canvas data-world-input></canvas><div class="hide-hud"></div><div class="hide-aim"></div>
+    <div class="hide-touch" data-world-input><div class="stick" aria-label="Движение">✥</div>
+      <div class="hide-touch-actions"><button class="jump" hidden>Прыжок</button><button class="taunt" hidden>Дразнилка</button><button class="action">Действие</button></div></div>
+    <div class="hide-menu">
+      <header class="hide-header"><img src="${brand}" width="550" height="204" alt="И.Г.Р.Ы."><a href="/">Все игры</a></header>
+      <section class="hide-panel"></section>
+    </div><output></output></main>`;
   const root = app.querySelector("main")!,
     panel = root.querySelector("section")!,
     canvas = root.querySelector("canvas")!,
@@ -25,6 +42,7 @@ export function mount(app: HTMLElement) {
     out = root.querySelector("output")!;
   const action = root.querySelector<HTMLButtonElement>(".action")!;
   const jump = root.querySelector<HTMLButtonElement>(".jump")!;
+  const taunt = root.querySelector<HTMLButtonElement>(".taunt")!;
   const invited = new URL(location.href).searchParams.get("room")?.trim() ?? "";
   const client = new Client(
     import.meta.env.VITE_SERVER_URL ||
@@ -37,7 +55,8 @@ export function mount(app: HTMLElement) {
     scene: Awaited<ReturnType<typeof createScene>> | undefined,
     ready = false,
     sceneFailed = false,
-    generation = 0,
+    sceneMap: MapId | undefined,
+    sceneLoad: AbortController | undefined,
     seenAt = 0,
     stamp = "",
     messageTimer = 0;
@@ -50,16 +69,19 @@ export function mount(app: HTMLElement) {
   }
   function form(error = "") {
     root.dataset.play = "false";
+    root.dataset.screen = "entry";
     panel.hidden = false;
-    panel.innerHTML = `<a href="/">Все игры</a><h1>Прятки</h1><p>Brightline Offices · 2–12 игроков</p>
-      <form><fieldset class="hide-entry">
-        <div class="hide-modes" role="group" aria-label="Вход в комнату">
-          <button type="button" data-mode="create">Новая комната</button>
-          <button type="button" data-mode="join">Войти по коду</button>
+    panel.innerHTML = `<h1 class="hide-patch-title"><img src="${hidePatch}" width="375" height="640" alt="Прятки"></h1>
+      <form class="hide-entry-sheet survey-online-lobby survey-online-dialog">
+        <h2>Играть с друзьями</h2><p class="hide-capacity">2–12 игроков</p>
+        <fieldset class="hide-entry">
+        <div class="survey-online-modes" role="group" aria-label="Вход в комнату">
+          <button class="survey-button secondary-action" type="button" data-mode="create">Новая комната</button>
+          <button class="survey-button secondary-action" type="button" data-mode="join">Войти по коду</button>
         </div>
         <label>Ваше имя<input name="name" maxlength="24" required autocomplete="nickname"></label>
         <label>Код комнаты<input name="code" placeholder="H123ABC" required autocomplete="off" autocapitalize="characters" spellcheck="false"></label>
-        <button type="submit"></button>
+        <button class="survey-button primary-action" type="submit"></button>
       </fieldset><small role="status"></small></form>`;
     const entry = panel.querySelector("form")!;
     const fields = entry.querySelector("fieldset")!;
@@ -121,38 +143,53 @@ export function mount(app: HTMLElement) {
     const url = new URL(location.href);
     url.searchParams.set("room", r.roomId);
     history.replaceState(null, "", url);
+    r.onMessage("taunt", (point: Point) => scene?.cry(point));
     r.onMessage("shot", (shot: Shot) => scene?.shot(shot));
     r.onMessage("feedback", (s: string) => notify(s));
     r.onMessage("view", (v: Snapshot) => {
       view = v;
       seenAt = performance.now();
-      scene?.update(v);
+      const selected = v.mapId ?? "office";
+      if (selected !== sceneMap) {
+        sceneLoad?.abort();
+        sceneLoad = undefined;
+        sceneMap = selected;
+        scene = undefined;
+        ready = sceneFailed = false;
+      }
+      if (scene) scene.update(v);
+      else if (v.phase !== "lobby" && !sceneLoad) void openScene(selected, r);
       render();
     });
     r.onLeave(() => {
+      sceneLoad?.abort();
       location.reload();
     });
     r.send("sync");
-    if (!scene) {
-      const gen = ++generation;
-      try {
-        scene = await createScene(
-          canvas,
-          r.sessionId,
-          (batch) => room?.send("move", batch),
-          (aim, seen) => room?.send("use", { aim, seen }),
-        );
-        if (gen !== generation) return;
-        ready = true;
-        if (view) scene.update(view);
-        stamp = "";
-        render();
-      } catch {
-        sceneFailed = true;
-        stamp = "";
-        render();
-      }
+  }
+  async function openScene(mapId: MapId, r: Room) {
+    const controller = sceneLoad = new AbortController();
+    try {
+      const [{ createScene }, world] = await Promise.all([import("./scene"), loadWorld(mapId)]);
+      controller.signal.throwIfAborted();
+      const loaded = await createScene(
+        canvas, r.sessionId,
+        batch => r.send("move", batch),
+        (aim, seen) => r.send("use", { aim, seen }),
+        world, mapId, controller.signal,
+      );
+      if (controller.signal.aborted) return;
+      scene = loaded;
+      ready = true;
+      if (view) scene.update(view);
+    } catch (error) {
+      if (controller.signal.aborted) return;
+      controller.abort();
+      console.error("Не удалось загрузить карту", error);
+      sceneFailed = true;
     }
+    stamp = "";
+    render();
   }
   function render() {
     if (!room || !view) return;
@@ -165,7 +202,7 @@ export function mount(app: HTMLElement) {
     const signature = play
       ? "play:" + me.hunter + ":" + me.alive
       : JSON.stringify([
-          ready, sceneFailed, v.phase, v.winner, v.host,
+          ready, sceneFailed, v.phase, v.winner, v.host, v.mapId,
           v.phase === "lobby" && v.settings,
           v.phase === "lobby" && v.players.map((p) => [p.id, p.name, p.hunter, p.online]),
         ]);
@@ -173,22 +210,25 @@ export function mount(app: HTMLElement) {
     stamp = signature;
     root.dataset.play = String(play);
     root.dataset.results = String(ready && v.phase === "results");
+    root.dataset.screen = v.phase;
     panel.hidden = play;
     action.textContent = me.hunter ? "Выстрел" : "Скопировать";
     action.hidden = !me.alive;
     jump.hidden = !play || me.hunter || !me.alive;
+    taunt.hidden = jump.hidden;
     if (play) return;
     if (document.pointerLockElement) document.exitPointerLock();
-    if (!ready) {
+    if (v.phase !== "lobby" && !ready) {
+      root.dataset.screen = "loading";
       panel.innerHTML = sceneFailed
-        ? "<h1>Офис не загрузился</h1><p>Проверьте доступность WebGL и обновите страницу.</p>"
-        : "<h1>Загружаем офис…</h1>";
+        ? "<h1>Карта не загрузилась</h1><p>Проверьте доступность WebGL и обновите страницу.</p>"
+        : "<h1>Загружаем карту…</h1>";
       return;
     }
     if (v.phase === "hide") {
-      panel.innerHTML =
-        "<h1>Вы водите</h1><p>Игроки выбирают укрытия. Офис откроется через <b class='clock'></b>.</p>" +
-        "<p>Если выстрелите в обычный предмет, в который можно превратиться, потеряете одну жизнь.</p>";
+      panel.innerHTML = `<h1>Вы водите</h1><p>Игроки выбирают укрытия на карте «${mapNames[v.mapId ?? "office"]}».</p>
+        <p class="hide-countdown">До выхода <b class="clock"></b></p>
+        <p>Попадание в обычный предмет, в который можно превратиться, стоит одной жизни.</p>`;
       return;
     }
     if (v.phase === "results") {
@@ -197,7 +237,7 @@ export function mount(app: HTMLElement) {
         v.winner +
         " победили</h1>" +
         (v.host === me.id
-          ? "<button id='again'>Ещё раунд</button>"
+          ? "<button class='survey-button primary-action' id='again'>Ещё раунд</button>"
           : "<p>Ведущий может начать следующий раунд.</p>");
       return;
     }
@@ -209,16 +249,25 @@ export function mount(app: HTMLElement) {
     // Keep the controls mounted while players join or change sides.
     // Rebuilding them would discard a partially typed setting on a lobby update.
     if (!panel.querySelector(".hide-settings")) {
-      panel.innerHTML = '<a href="/">Все игры</a><h1>Прятки</h1><p class="hide-count"></p>' +
-        '<label class="hide-room-code">Код комнаты<input readonly value="' + escape(room.roomId) + '"></label>' +
-        '<div class="hide-invites"><button id="copy-code">Скопировать код</button><button id="invite">Скопировать ссылку</button></div><ul></ul>' +
-        '<p>Нажмите на роль, чтобы сменить сторону. Для старта нужен хотя бы один игрок с каждой стороны.</p>' +
-        '<fieldset class="hide-settings"><legend>Настройки раунда</legend>' + settingFields + '</fieldset>' +
-        '<button id="start">Начать раунд</button><p class="hide-start-wait">Ожидаем старта</p>';
+      panel.innerHTML = `<header class="survey-online-heading">
+        <div class="survey-online-overview"><h1>Комната ожидания</h1><p class="hide-count"></p></div>
+        <div class="survey-online-invites"><label class="survey-online-code hide-room-code">Код комнаты
+        <input readonly value="${escape(room.roomId)}"></label><div class="survey-online-copy">
+        <button class="survey-button secondary-action" id="copy-code">Скопировать код</button>
+        <button class="survey-button secondary-action" id="invite">Скопировать ссылку</button></div></div>
+        </header><div class="hide-room-columns">
+        <section class="survey-online-team hide-roster"><h2>Игроки</h2><ul></ul>
+        <p class="hide-note">Нажмите на роль, чтобы сменить сторону.</p></section>
+        <section class="survey-online-team hide-rules"><h2 id="hide-rules-title">Настройки раунда</h2>
+        <fieldset class="hide-settings" aria-labelledby="hide-rules-title">
+        <label>Карта<select data-map aria-label="Карта">${mapOptions}</select></label>${settingFields}</fieldset></section></div>
+        <footer class="survey-online-footer"><p class="hide-start-wait"></p>
+        <button class="survey-button primary-action" id="start">Начать раунд</button></footer>`;
     }
-    panel.querySelector(".hide-count")!.textContent = "Brightline Offices · " + v.players.length + " / 12";
+    panel.querySelector(".hide-count")!.textContent = "Прятки · В комнате " + v.players.length + " из 12";
     const settings = panel.querySelector<HTMLFieldSetElement>(".hide-settings")!;
     settings.disabled = !host;
+    settings.querySelector("select")!.value = v.mapId ?? "office";
     for (const field of settings.querySelectorAll<HTMLInputElement>("input")) {
       const key = field.dataset.setting;
       if (isHideSetting(key) && field !== document.activeElement) field.value = String(v.settings[key]);
@@ -226,7 +275,9 @@ export function mount(app: HTMLElement) {
     const start = panel.querySelector<HTMLButtonElement>("#start")!;
     start.hidden = !host;
     start.disabled = !canStart;
-    panel.querySelector<HTMLElement>(".hide-start-wait")!.hidden = host;
+    const wait = panel.querySelector<HTMLElement>(".hide-start-wait")!;
+    wait.textContent = !canStart ? "Для старта нужны водящий и прячущийся. Все игроки должны быть на связи." :
+      host ? "" : "Раунд начнёт ведущий.";
     panel.querySelector("ul")!.innerHTML =
       v.players
         .map(
@@ -235,7 +286,7 @@ export function mount(app: HTMLElement) {
             escape(p.name) +
             (p.id === me.id ? " · вы" : "") +
             (p.online ? "" : " · отключён") +
-            '</span><button data-role="' +
+            '</span><button class="survey-button secondary-action" data-role="' +
             escape(p.id) +
             '" ' +
             (host || p.id === me.id ? "" : "disabled") +
@@ -247,7 +298,12 @@ export function mount(app: HTMLElement) {
   }
   panel.addEventListener("change", (event) => {
     const field = event.target;
-    if (!(field instanceof HTMLInputElement) || !room || !view || view.phase !== "lobby" || room.sessionId !== view.host) return;
+    if (!room || !view || view.phase !== "lobby" || room.sessionId !== view.host) return;
+    if (field instanceof HTMLSelectElement && field.hasAttribute("data-map") && isMapId(field.value)) {
+      room.send("map", { id: field.value });
+      return;
+    }
+    if (!(field instanceof HTMLInputElement)) return;
     const key = field.dataset.setting;
     if (!isHideSetting(key)) return;
     const value = field.valueAsNumber;
@@ -303,7 +359,7 @@ export function mount(app: HTMLElement) {
     const hint = matchMedia("(pointer:coarse)").matches
       ? "Слева — движение, справа — обзор"
       : "WASD — движение · мышь — обзор · " +
-        (me.hunter ? "ЛКМ — выстрел" : "пробел — прыжок · E — скопировать") +
+        (me.hunter ? "ЛКМ — выстрел" : "пробел — прыжок · E — скопировать · Q — дразнилка") +
         " · щёлкните для захвата мыши";
     if (hud.dataset.hint !== hint) hud.dataset.hint = hint;
   }, 150);
@@ -323,9 +379,17 @@ export function mount(app: HTMLElement) {
   };
   pad.onlostpointercapture = e => scene?.joystick(0, 0, e.timeStamp);
   action.onclick = () => scene?.action();
+  taunt.onclick = () => { if (!taunt.hidden) room?.send("taunt"); };
   jump.onpointerdown = (e) => { e.preventDefault(); scene?.jump(); };
+  window.addEventListener("keydown", (event) => {
+    if (event.code !== "KeyQ" || event.repeat || !room || !view || document.hidden ||
+        event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement) return;
+    const me = view.players.find(p => p.id === room!.sessionId);
+    if (me?.alive && !me.hunter && (view.phase === "hide" || view.phase === "hunt")) room.send("taunt");
+  });
   window.addEventListener("pagehide", () => room?.connection.close());
   async function resume(token: string) {
+    root.dataset.screen = "loading";
     panel.innerHTML = "<h1>Возвращаемся в комнату…</h1>";
     const deadline = Date.now() + 60000;
     // A proxy may report the old socket closed after the replacement tab loads.

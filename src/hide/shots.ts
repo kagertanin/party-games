@@ -1,9 +1,9 @@
 import * as T from "three";
 import { revealDuration, type Shot } from "../../shared/hide/shot";
-import { cameraDistance, models, type Player } from "../../shared/hide/world";
+import type { HideWorld, Player } from "../../shared/hide/world";
 
 /** Frame the stationary disguise from an open side, even with a wall or another prop behind it. */
-export function foundView(player: Player, yaw: number, shot?: Shot) {
+export function foundView({ models, cameraDistance }: HideWorld, player: Player, yaw: number, shot?: Shot) {
   const [w, h, d] = models[player.form]?.size ?? [0.52, 1.72, 0.52];
   const focus = new T.Vector3(player.x, (player.y ?? 0) + Math.max(0.18, h * 0.62), player.z);
   const desired = T.MathUtils.clamp(Math.max(w, h, d) * 1.55, 1.25, 2.8);
