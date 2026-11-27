@@ -147,6 +147,99 @@
   border: 1px dashed color-mix(in srgb, var(--fabric-ink) 31%, transparent);
   background: transparent;
 }
+
+.survey-online-overview { min-width: 0; flex: 1 1 22rem; }
+.survey-app .survey-online-unassigned {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: start;
+  gap: .4rem;
+  margin-top: .7rem;
+}
+
+.survey-online-unassigned li {
+  max-width: 100%;
+  border: 1px solid color-mix(in srgb, var(--fabric-ink) 17%, transparent);
+  border-radius: .55rem .75rem .5rem .65rem;
+  background: #fffaf1;
+  overflow-wrap: anywhere;
+}
+
+.survey-online-team :is(.survey-online-member, .has-seat-button) { padding: 0; }
+.survey-online-member-label,
+.survey-online-take-seat {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: .3rem .45rem;
+  width: 100%;
+  min-height: 2.65rem;
+  padding: .35rem .55rem;
+  border-radius: inherit;
+  background: transparent;
+  text-align: start;
+  overflow-wrap: anywhere;
+}
+
+.survey-online-member-label span {
+  color: var(--fabric-muted);
+  font-size: .8rem;
+}
+
+.survey-online-manage::after {
+  content: "";
+  margin-inline-start: auto;
+  width: .38rem;
+  height: .38rem;
+  margin-inline-end: .15rem;
+  border: solid var(--fabric-muted);
+  border-width: 0 1.5px 1.5px 0;
+  transform: rotate(45deg);
+}
+
+.survey-online-manage[aria-expanded="true"]::after { transform: rotate(225deg); }
+.survey-online-manage:hover,
+.survey-online-manage[aria-expanded="true"] { background-color: var(--fabric-gold); }
+
+.survey-online-take-seat {
+  gap: .4rem;
+  color: var(--fabric-ink);
+  font-weight: 550;
+}
+.survey-online-take-seat::before {
+  content: "+";
+  flex: none;
+  font-size: 1.1em;
+  opacity: .75;
+}
+.survey-online-take-seat:hover:not(:disabled) { background: var(--fabric-cream); }
+
+.survey-online-member-actions {
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: .4rem;
+  row-gap: .35rem;
+  width: 100%;
+  padding: .15rem .45rem .5rem;
+}
+.survey-online-member-actions p {
+  width: 100%;
+  font-size: .875rem;
+  padding-block: .2rem .1rem;
+}
+.survey-online-member-actions .survey-button {
+  justify-content: start;
+  gap: .26rem;
+  min-height: 2.3rem;
+  padding: .4rem .5rem;
+  font-size: .85rem;
+}
+.survey-online-member-actions .survey-online-kick {
+  border-color: #aa5366;
+  color: #8f243c;
+  background: #fff1ec;
+}
+.survey-online-member-actions .survey-online-kick:hover { background: #ffe1db; }
 .survey-online-footer {
   margin-top: clamp(1.2rem, 3vw, 2rem);
   border-top: 1px dashed color-mix(in srgb, var(--fabric-ink) 32%, transparent);

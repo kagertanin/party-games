@@ -1,11 +1,13 @@
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomInt } from "node:crypto";
 import { ErrorCode, Room, ServerError, type Client } from "@colyseus/core";
 import {
   SURVEY_DEFAULT_TEAM_CAPACITY,
+  SURVEY_KICKED_CODE,
   SURVEY_MAX_TEAM_SIZE,
   SURVEY_MIN_TEAM_SIZE,
   SURVEY_TEAM_COUNTS,
   SURVEY_TEAM_SIZES,
+  canStartSurvey,
   type SurveyMatchView,
   type SurveyMember,
   type SurveyOnlineAction,
@@ -22,6 +24,7 @@ import { getTurnTiming, READINESS_MS } from "../src/survey/turn-timing.js";
 
 const activeCodes = new Set<string>();
 const RECONNECT_SECONDS = 90;
+const KICKED_MESSAGE = "Ведущий исключил вас из комнаты.";
 
 type Stage =
   | { phase: "ballot"; deadline: number; ballot: QuestionBallot }
@@ -29,7 +32,7 @@ type Stage =
   | { phase: "turn"; deadline: number; clockVisible: boolean }
   | { phase: "reveal" | "results"; deadline: 0 };
 
-type LobbyTeam = { fruitIndex: number; capacity: number; players: SurveyMember[] };
+type LobbyTeam = { fruitIndex: number; seats: (SurveyMember | null)[] };
 type Match = { game: SurveyGame; stage: Stage; usedQuestions: Set<number>; roster: SurveyMember[][] };
 
 function playerName(value: unknown): string {
@@ -44,22 +47,23 @@ function turnTiming({ game }: Match) {
   return getTurnTiming(game.questionIndex, game.turnIndex, game.teams.length);
 }
 
-function smallestAvailableTeam(teams: LobbyTeam[]) {
-  return teams.filter(({ players, capacity }) => players.length < capacity)
-    .sort((first, second) => first.players.length - second.players.length)[0];
+function createLobbyTeam(fruitIndex: number, capacity: number): LobbyTeam {
+  return { fruitIndex, seats: Array<null>(capacity).fill(null) };
 }
 
-function balanceLobbyTeams(teams: LobbyTeam[]) {
-  for (;;) {
-    const smallest = smallestAvailableTeam(teams);
-    const largest = [...teams].sort((first, second) => second.players.length - first.players.length)[0];
-    if (!smallest || largest.players.length - smallest.players.length < 2) return;
-    smallest.players.push(largest.players.pop()!);
+function shuffled<T>(values: Iterable<T>): T[] {
+  const result = [...values];
+  for (let i = result.length - 1; i > 0; i--) {
+    const j = randomInt(i + 1);
+    [result[i], result[j]] = [result[j], result[i]];
   }
+  return result;
 }
 
 export class SurveyRoom extends Room {
   private teams: LobbyTeam[] = [];
+  private readonly members = new Map<string, SurveyMember>();
+  private readonly reconnections = new Map<string, ReturnType<Room["allowReconnection"]>>();
   private owner = "";
   private phaseId = 0;
   private match: Match | undefined;
@@ -78,7 +82,7 @@ export class SurveyRoom extends Room {
     } while (activeCodes.has(code));
     this.roomId = code;
     activeCodes.add(code);
-    this.teams = Array.from({ length: teamCount }, (_, fruitIndex) => ({ fruitIndex, capacity: teamSize, players: [] }));
+    this.teams = Array.from({ length: teamCount }, (_, fruitIndex) => createLobbyTeam(fruitIndex, teamSize));
     this.updateCapacity();
     this.patchRate = 0;
     void this.setPrivate();
@@ -98,37 +102,45 @@ export class SurveyRoom extends Room {
   }
 
   onJoin(client: Client, _options: unknown, name: string) {
-    const shortest = smallestAvailableTeam(this.teams);
-    if (this.match || !shortest) {
+    if (this.match || this.members.size >= this.maxClients) {
       throw new ServerError(ErrorCode.AUTH_FAILED, "Нет свободных мест в лобби.");
     }
-    shortest.players.push({ id: client.sessionId, name, connected: true });
+    this.members.set(client.sessionId, { id: client.sessionId, name, connected: true });
     this.updateOwner();
     this.sendAll(Date.now());
   }
 
   async onLeave(client: Client, consented: boolean) {
-    const member = this.teams.flatMap(({ players }) => players).find(({ id }) => id === client.sessionId);
+    const member = this.members.get(client.sessionId);
     if (!member) return;
     member.connected = false;
     this.updateOwner();
     if (!consented) {
       this.sendAll(Date.now());
+      const reservation = this.allowReconnection(client, "manual");
+      this.reconnections.set(member.id, reservation);
+      const expiry = setTimeout(() => reservation.reject(new Error("Время переподключения истекло.")),
+        RECONNECT_SECONDS * 1000);
       try {
-        await this.allowReconnection(client, RECONNECT_SECONDS);
-        member.connected = true;
-        this.updateOwner();
-        this.sendAll(Date.now());
+        await reservation;
+        if (this.members.has(member.id)) {
+          member.connected = true;
+          this.updateOwner();
+          this.sendAll(Date.now());
+        }
         return;
       } catch {
         // An expired reservation no longer occupies a seat in the lobby.
+        if (!this.members.has(member.id)) return;
+      } finally {
+        clearTimeout(expiry);
+        if (this.reconnections.get(member.id) === reservation) this.reconnections.delete(member.id);
       }
     }
     if (this.match?.roster.some((team) => team.includes(member))) {
       this.retired.add(member.id);
     } else {
-      for (const team of this.teams) team.players = team.players.filter((player) => player !== member);
-      if (!this.match) balanceLobbyTeams(this.teams);
+      this.removeMember(member);
       this.updateOwner();
     }
     this.sendAll(Date.now());
@@ -154,28 +166,17 @@ export class SurveyRoom extends Room {
     if (!payload || typeof payload !== "object" || !("type" in payload)) {
       throw new Error("Некорректная команда.");
     }
+    const member = this.members.get(actor);
+    if (!member?.connected) throw new Error("Вы больше не в комнате.");
     const action = payload as SurveyOnlineAction;
     const match = this.match;
-    if (action.type === "add-team" || action.type === "remove-team" || action.type === "resize-team") {
-      this.requireOwner(actor);
-      if (match) throw new Error("Менять команды можно только в комнате ожидания.");
-      this.changeTeams(action);
-      return;
-    }
-    if (action.type === "start") {
-      this.requireOwner(actor);
-      if (match) throw new Error("Партия уже началась.");
-      // A reservation stays in the waiting room. The current round only counts connected players.
-      const roster = this.teams.map((team) => team.players.filter(({ connected }) => connected));
-      if (!roster.every((team) => team.length >= SURVEY_MIN_TEAM_SIZE)) {
-        throw new Error("Дождитесь, пока в каждой команде будет хотя бы два подключённых игрока.");
+    if (!("phaseId" in action)) {
+      if (match) {
+        throw new Error(action.type === "start"
+          ? "Партия уже началась."
+          : "Менять команды можно только в комнате ожидания.");
       }
-      const playerCount = roster.flat().length;
-      const game = new SurveyGame(questions, playerCount, Math.random, QUESTIONS_PER_MATCH,
-        this.teams.length, roster.map((team) => team.map(({ name }) => name)));
-      const usedQuestions = new Set<number>();
-      this.match = { game, roster, usedQuestions, stage: this.questionStage(usedQuestions, playerCount, now) };
-      this.phaseId++;
+      this.applyLobbyAction(member, action, now);
       return;
     }
     if (!match || action.phaseId !== this.phaseId) throw new Error("Этот этап уже завершился.");
@@ -205,12 +206,125 @@ export class SurveyRoom extends Room {
     } else if (action.type === "replay" && stage.phase === "results") {
       this.requireOwner(actor);
       this.match = undefined;
-      for (const team of this.teams) team.players = team.players.filter(({ id }) => !this.retired.has(id));
+      for (const id of this.retired) {
+        const player = this.members.get(id);
+        if (player) this.removeMember(player);
+      }
       this.retired.clear();
-      balanceLobbyTeams(this.teams);
       this.updateOwner();
     } else {
       throw new Error("Это действие сейчас недоступно.");
+    }
+  }
+
+  private applyLobbyAction(
+    member: SurveyMember,
+    action: Exclude<SurveyOnlineAction, { phaseId: number }>,
+    now: number,
+  ) {
+    if (action.type === "take-seat") {
+      this.takeSeat(member, action.team, action.seat);
+      return;
+    }
+    this.requireOwner(member.id);
+    switch (action.type) {
+      case "add-team": case "remove-team": case "resize-team":
+        this.changeTeams(action);
+        return;
+      case "move-player":
+        this.takeSeat(this.requireMember(action.memberId), action.team, action.seat);
+        return;
+      case "kick-player":
+        this.kickPlayer(this.requireMember(action.memberId));
+        return;
+      case "shuffle-teams":
+        this.shuffleTeams();
+        return;
+      case "start":
+        this.startMatch(now);
+        return;
+      default:
+        throw new Error("Это действие сейчас недоступно.");
+    }
+  }
+
+  private lobbyRoster() {
+    return this.teams.map(({ seats }) => seats.filter((member): member is SurveyMember => member !== null));
+  }
+
+  private unassignedMembers(roster: SurveyMember[][]) {
+    const assigned = new Set(roster.flat());
+    return [...this.members.values()].filter((member) => !assigned.has(member));
+  }
+
+  private startMatch(now: number) {
+    const lobbyRoster = this.lobbyRoster();
+    if (!canStartSurvey(lobbyRoster.map((players) => ({ players })), this.unassignedMembers(lobbyRoster))) {
+      throw new Error("Все подключённые игроки должны выбрать команду. В каждой команде нужно хотя бы два подключённых игрока.");
+    }
+    // Reserved seats stay in the lobby. Returning players outside this roster can watch the match.
+    const roster = lobbyRoster.map((team) => team.filter(({ connected }) => connected));
+    const playerCount = roster.flat().length;
+    const game = new SurveyGame(questions, playerCount, Math.random, QUESTIONS_PER_MATCH,
+      this.teams.length, roster.map((team) => team.map(({ name }) => name)));
+    const usedQuestions = new Set<number>();
+    this.match = { game, roster, usedQuestions, stage: this.questionStage(usedQuestions, playerCount, now) };
+    this.phaseId++;
+  }
+
+  private requireTeam(index: number) {
+    const team = this.teams.find(({ fruitIndex }) => fruitIndex === index);
+    if (!team) throw new Error("Такой команды нет в комнате.");
+    return team;
+  }
+
+  private requireMember(id: string) {
+    const member = this.members.get(id);
+    if (!member) throw new Error("Этот игрок больше не в комнате.");
+    return member;
+  }
+
+  private takeSeat(member: SurveyMember, teamIndex: number, seat: number) {
+    const { seats } = this.requireTeam(teamIndex);
+    if (!Number.isInteger(seat) || seat < 0 || seat >= seats.length) throw new Error("Такого места нет.");
+    if (seats[seat] === member) return;
+    if (seats[seat] !== null) throw new Error("Это место уже занято.");
+    this.releaseSeat(member);
+    seats[seat] = member;
+  }
+
+  private releaseSeat(member: SurveyMember) {
+    for (const team of this.teams) {
+      const seat = team.seats.indexOf(member);
+      if (seat === -1) continue;
+      team.seats[seat] = null;
+      return;
+    }
+  }
+
+  private removeMember(member: SurveyMember) {
+    this.releaseSeat(member);
+    this.members.delete(member.id);
+  }
+
+  private kickPlayer(member: SurveyMember) {
+    if (member.id === this.owner) throw new Error("Ведущий может выйти из комнаты сам.");
+    this.removeMember(member);
+    this.reconnections.get(member.id)?.reject(new Error(KICKED_MESSAGE));
+    const target = this.clients.getById(member.id);
+    target?.send("kicked", KICKED_MESSAGE);
+    target?.leave(SURVEY_KICKED_CODE, KICKED_MESSAGE);
+  }
+
+  private shuffleTeams() {
+    const members = shuffled(this.members.values());
+    const teams = shuffled(this.teams);
+    for (const { seats } of teams) seats.fill(null);
+    let memberIndex = 0;
+    for (let seat = 0; seat < SURVEY_MAX_TEAM_SIZE && memberIndex < members.length; seat++) {
+      for (const { seats } of teams) {
+        if (seat < seats.length && memberIndex < members.length) seats[seat] = members[memberIndex++];
+      }
     }
   }
 
@@ -218,35 +332,35 @@ export class SurveyRoom extends Room {
     if (action.type === "add-team") {
       const fruitIndex = SURVEY_TEAM_NAMES.findIndex((_, index) => !this.teams.some((team) => team.fruitIndex === index));
       if (fruitIndex === -1) throw new Error("Можно создать не больше трёх команд.");
-      this.teams.push({ fruitIndex, capacity: SURVEY_DEFAULT_TEAM_CAPACITY, players: [] });
+      this.teams.push(createLobbyTeam(fruitIndex, SURVEY_DEFAULT_TEAM_CAPACITY));
       this.teams.sort((first, second) => first.fruitIndex - second.fruitIndex);
-      balanceLobbyTeams(this.teams);
     } else {
-      const team = this.teams.find(({ fruitIndex }) => fruitIndex === action.team);
-      if (!team) throw new Error("Такой команды нет в комнате.");
+      const team = this.requireTeam(action.team);
       if (action.type === "remove-team") {
         if (this.teams.length <= SURVEY_TEAM_COUNTS[0]) throw new Error("В комнате должно быть хотя бы две команды.");
-        const remaining = this.teams.filter((entry) => entry !== team);
-        const free = remaining.reduce((sum, entry) => sum + entry.capacity - entry.players.length, 0);
-        if (free < team.players.length) throw new Error("В остальных командах не хватает мест.");
-        for (const member of team.players) smallestAvailableTeam(remaining)!.players.push(member);
-        this.teams = remaining;
-        balanceLobbyTeams(this.teams);
+        if (this.maxClients - team.seats.length < this.members.size) throw new Error("В остальных командах не хватает мест.");
+        this.teams = this.teams.filter((entry) => entry !== team);
       } else {
         if (action.delta !== -1 && action.delta !== 1) throw new Error("Места меняются по одному.");
-        const capacity = team.capacity + action.delta;
+        const capacity = team.seats.length + action.delta;
         if (capacity < SURVEY_MIN_TEAM_SIZE || capacity > SURVEY_MAX_TEAM_SIZE) {
           throw new Error("В команде может быть от двух до пяти мест.");
         }
-        if (capacity < team.players.length) throw new Error("Можно убрать только свободное место.");
-        team.capacity = capacity;
+        if (action.delta === 1) team.seats.push(null);
+        else {
+          const emptySeat = team.seats.lastIndexOf(null);
+          if (emptySeat === -1 || this.maxClients <= this.members.size) {
+            throw new Error("Можно убрать только свободное место.");
+          }
+          team.seats.splice(emptySeat, 1);
+        }
       }
     }
     this.updateCapacity();
   }
 
   private updateCapacity() {
-    this.maxClients = this.teams.reduce((sum, team) => sum + team.capacity, 0);
+    this.maxClients = this.teams.reduce((sum, team) => sum + team.seats.length, 0);
   }
 
   private advance(now: number): boolean {
@@ -316,7 +430,7 @@ export class SurveyRoom extends Room {
   }
 
   private updateOwner() {
-    const players = this.match?.roster.flat() ?? this.teams.flatMap((team) => team.players);
+    const players = this.match?.roster.flat() ?? [...this.members.values()];
     const connected = players.filter((member) => member.connected);
     if (!connected.some(({ id }) => id === this.owner)) this.owner = connected[0]?.id ?? "";
   }
@@ -336,19 +450,23 @@ export class SurveyRoom extends Room {
   }
 
   private sendView(client: Client, now: number) {
+    if (!this.members.has(client.sessionId)) return;
+    const roster = this.match?.roster ?? this.lobbyRoster();
     const view: SurveyRoomView = {
       code: this.roomId,
       you: client.sessionId,
       owner: this.owner,
       teamCount: this.teams.length,
-      teamSize: Math.max(...this.teams.map(({ capacity }) => capacity)),
-      teams: this.teams.map(({ players, fruitIndex, capacity }, index) => ({
-        players: this.match?.roster[index] ?? players,
+      teamSize: Math.max(...this.teams.map(({ seats }) => seats.length)),
+      teams: this.teams.map(({ seats, fruitIndex }, index) => ({
+        players: roster[index],
+        ...(this.match ? {} : { seats }),
         name: SURVEY_TEAM_NAMES[fruitIndex],
         fruitIndex,
-        capacity,
+        capacity: seats.length,
         score: this.match?.game.teams[index].score ?? 0,
       })),
+      unassigned: this.match ? [] : this.unassignedMembers(roster),
       serverNow: now,
       match: this.match ? this.matchView(this.match, client.sessionId) : null,
     };

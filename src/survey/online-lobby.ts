@@ -1,14 +1,15 @@
 import "./online-lobby.css";
 import type { Client, Room } from "colyseus.js";
 import {
-  SURVEY_CODE, SURVEY_ROOM, SURVEY_TEAM_COUNTS, SURVEY_MIN_TEAM_SIZE, SURVEY_MAX_TEAM_SIZE,
-  type SurveyOnlineAction, type SurveyRoomView,
+  SURVEY_CODE, SURVEY_KICKED_CODE, SURVEY_ROOM, SURVEY_TEAM_COUNTS, SURVEY_MIN_TEAM_SIZE, SURVEY_MAX_TEAM_SIZE,
+  canStartSurvey, type SurveyMember, type SurveyOnlineAction, type SurveyRoomView,
 } from "../../shared/survey-online";
 import { renderFruit } from "./fruit-icons";
 
 const SESSION_KEY = "party-games.survey.connection";
 const NAME_KEY = "party-games.survey.name";
 const CONNECT_TIMEOUT = 12_000;
+const KICKED_MESSAGE = "Ведущий исключил вас из комнаты.";
 const escape = (value: string) => value.replace(/[&<>"']/g, (char) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
 })[char]!);
@@ -52,6 +53,13 @@ function connectionError(error: unknown, missingRoom: boolean, fallback: string)
 }
 
 type SavedSession = { token: string; code: string; endpoint: string };
+type LobbyTeam = {
+  name: string;
+  players: SurveyMember[];
+  seats: (SurveyMember | null)[];
+  capacity: number;
+  fruit: number;
+};
 
 export function createSurveyLobby(app: HTMLElement, onUpdate: () => void) {
   const endpoint = serverEndpoint();
@@ -65,6 +73,13 @@ export function createSurveyLobby(app: HTMLElement, onUpdate: () => void) {
   let notice = "";
   let dialog: HTMLDialogElement | null = null;
   let mode: "create" | "join" = "create";
+  let managedMember: string | null = null;
+  let confirmingKick = false;
+
+  function selectMember(id: string | null) {
+    managedMember = id;
+    confirmingKick = false;
+  }
 
   function save(session: SavedSession | null) {
     saved = session;
@@ -170,6 +185,10 @@ export function createSurveyLobby(app: HTMLElement, onUpdate: () => void) {
         }
       }
       view = next;
+      const members = next.teams.flatMap(({ players }) => players).concat(next.unassigned ?? []);
+      if (next.match || next.you !== next.owner || !members.some(({ id }) => id === managedMember)) {
+        selectMember(null);
+      }
       removeDialog();
       redrawRoom();
     });
@@ -178,9 +197,16 @@ export function createSurveyLobby(app: HTMLElement, onUpdate: () => void) {
       error = message;
       redrawRoom();
     });
-    socket.onLeave(() => {
+    socket.onMessage<string>("kicked", (message) => {
+      if (room === socket) leave(message || KICKED_MESSAGE);
+    });
+    socket.onLeave((code) => {
       if (room !== socket) return;
       room = null;
+      if (code === SURVEY_KICKED_CODE) {
+        leave(KICKED_MESSAGE);
+        return;
+      }
       clearTimeout(waitingForView);
       pending = false;
       error = "Связь с комнатой прервалась.";
@@ -193,7 +219,7 @@ export function createSurveyLobby(app: HTMLElement, onUpdate: () => void) {
       pending = false;
       error = "Комната не ответила. Попробуйте подключиться ещё раз.";
       updateDialog();
-      if (view) onUpdate();
+      if (view) redrawRoom();
     }, CONNECT_TIMEOUT);
     socket.send("sync");
   }
@@ -204,7 +230,7 @@ export function createSurveyLobby(app: HTMLElement, onUpdate: () => void) {
     pending = true;
     error = "";
     updateDialog();
-    if (view) onUpdate();
+    if (view) redrawRoom();
     let sdk: typeof import("colyseus.js") | undefined;
     try {
       sdk = await import("colyseus.js");
@@ -230,7 +256,7 @@ export function createSurveyLobby(app: HTMLElement, onUpdate: () => void) {
         ? "Не удалось вернуться в комнату. Попробуйте ещё раз."
         : "Не удалось подключиться к игровому серверу. Попробуйте ещё раз.");
       updateDialog();
-      if (view) onUpdate();
+      if (view) redrawRoom();
     }
   }
 
@@ -256,16 +282,18 @@ export function createSurveyLobby(app: HTMLElement, onUpdate: () => void) {
     } catch { save(null); }
   }
 
-  function leave() {
+  function leave(message = "") {
     ++attempt;
     dropRoom();
     save(null);
     view = null;
     pending = false;
-    error = "";
+    error = message;
     notice = "";
+    selectMember(null);
     onUpdate();
-    app.querySelector<HTMLButtonElement>("[data-survey='setup']")?.focus();
+    if (message) open();
+    else app.querySelector<HTMLButtonElement>("[data-survey='setup']")?.focus();
   }
 
   function send(action: SurveyOnlineAction) {
@@ -273,18 +301,26 @@ export function createSurveyLobby(app: HTMLElement, onUpdate: () => void) {
     const previousError = error;
     error = "";
     room.send("action", action);
-    if (previousError) onUpdate();
+    if (previousError) redrawRoom();
   }
 
-  function redrawRoom() {
+  function redrawRoom(focusAction?: string, memberId?: string) {
     const focused = document.activeElement;
-    const action = focused instanceof HTMLButtonElement ? focused.dataset.roomAction : undefined;
-    const team = focused instanceof HTMLButtonElement ? focused.dataset.roomTeam : undefined;
+    const previous = focused instanceof HTMLElement && app.contains(focused) ? focused.dataset : undefined;
     onUpdate();
-    if (!action || document.activeElement !== document.body) return;
-    const replacement = [...app.querySelectorAll<HTMLButtonElement>("button[data-room-action]")]
-      .find((button) => button.dataset.roomAction === action && button.dataset.roomTeam === team && !button.disabled);
-    replacement?.focus({ preventScroll: true });
+    if ((!previous?.roomAction && !focusAction) || document.activeElement !== document.body) return;
+    const buttons = [...app.querySelectorAll<HTMLButtonElement>("button[data-room-action]:not(:disabled)")];
+    const replacement = focusAction
+      ? buttons.find(({ dataset }) => dataset.roomAction === focusAction && dataset.roomMember === memberId)
+      : previous && buttons.find(({ dataset }) => dataset.roomAction === previous.roomAction
+        && dataset.roomTeam === previous.roomTeam && dataset.roomSeat === previous.roomSeat
+        && dataset.roomMember === previous.roomMember);
+    const related = previous?.roomMember
+      ? buttons.find(({ dataset }) => dataset.roomAction === "manage-member" && dataset.roomMember === previous.roomMember)
+      : [...app.querySelectorAll<HTMLElement>("[data-room-occupied-seat]")].find(({ dataset }) =>
+        dataset.roomTeam === previous?.roomTeam && dataset.roomSeat === previous?.roomSeat);
+    const fallback = app.querySelector<HTMLElement>("#survey-online-lobby-title");
+    (replacement ?? related ?? fallback)?.focus({ preventScroll: true });
   }
 
   function connectionMarkup() {
@@ -302,19 +338,62 @@ export function createSurveyLobby(app: HTMLElement, onUpdate: () => void) {
     const { code, teams, teamSize, you, owner } = view;
     const isHost = you === owner;
     const canEdit = !!room && !pending;
-    const roster = teams.map((team, index) => ({
-      ...team,
-      capacity: team.capacity ?? teamSize,
-      fruit: team.fruitIndex ?? index,
-      connected: team.players.filter((member) => member.connected).length,
+    const unassigned = view.unassigned ?? [];
+    const hasSeatSelection = Array.isArray(view.unassigned);
+    const canManage = isHost && canEdit && hasSeatSelection;
+    const roster: LobbyTeam[] = teams.map(({ name, players, capacity = teamSize, seats, fruitIndex }, index) => ({
+      name, capacity, players, fruit: fruitIndex ?? index,
+      seats: seats ?? Array.from({ length: capacity }, (_, seat) => players[seat] ?? null),
     }));
-    const connected = roster.reduce((sum, team) => sum + team.connected, 0);
-    const occupied = roster.reduce((sum, team) => sum + team.players.length, 0);
+    const members = roster.flatMap(({ players }) => players).concat(unassigned);
+    const connected = members.filter(({ connected }) => connected).length;
+    const occupied = members.length;
     const seats = roster.reduce((sum, team) => sum + team.capacity, 0);
-    const canStart = roster.every((team) => team.connected >= SURVEY_MIN_TEAM_SIZE);
+    const canStart = hasSeatSelection
+      ? canStartSurvey(roster, unassigned)
+      : roster.every(({ players }) => players.filter(({ connected }) => connected).length >= SURVEY_MIN_TEAM_SIZE);
+    let startMessage = "Для старта нужно минимум два игрока в каждой команде.";
+    if (canStart) startMessage = isHost ? "Можно начинать." : "Ожидаем запуска от ведущего.";
+    else if (unassigned.some((member) => member.connected)) startMessage = "Для старта всем нужно выбрать команду.";
+
+    function memberMarkup(member: SurveyMember, currentTeam?: number) {
+      const name = escape(member.name);
+      const id = escape(member.id);
+      const tag = [member.id === you ? "Вы" : "", member.id === owner ? "Ведущий" : "", member.connected ? "" : "Переподключается"]
+        .filter(Boolean).join(" · ");
+      const label = `<strong>${name}</strong>${tag ? `<span>${tag}</span>` : ""}`;
+      if (!canManage || member.id === you) return `<div class="survey-online-member-label">${label}</div>`;
+
+      const selected = managedMember === member.id;
+      const trigger = `<button class="survey-online-member-label survey-online-manage" type="button" data-room-action="manage-member"
+        data-room-member="${id}" aria-expanded="${selected}" ${selected ? 'aria-controls="survey-online-member-actions"' : ""}>${label}</button>`;
+      if (!selected) return trigger;
+      const actions = confirmingKick
+        ? `<p>Исключить «${name}» из комнаты?</p>
+          <button class="survey-button secondary-action" type="button" data-room-action="cancel-kick" data-room-member="${id}">Отмена</button>
+          <button class="survey-button survey-online-kick" type="button" data-room-action="kick-member" data-room-member="${id}">Исключить</button>`
+        : `${roster.map(({ name: teamName, fruit, seats: teamSeats }) => {
+            const seat = teamSeats.indexOf(null);
+            return currentTeam === fruit || seat < 0 ? "" : `<button class="survey-button secondary-action survey-team-${fruit}"
+              type="button" data-room-action="move-member" data-room-team="${fruit}" data-room-seat="${seat}"
+              data-room-member="${id}">${renderFruit(fruit)}В «${escape(teamName)}»</button>`;
+          }).join("")}
+          <button class="survey-button survey-online-kick" type="button" data-room-action="ask-kick"
+            data-room-member="${id}">Исключить из комнаты</button>`;
+
+      return `${trigger}
+        <div class="survey-online-member-actions" id="survey-online-member-actions" role="group" aria-label="Действия с игроком ${name}">${actions}</div>`;
+    }
+
     return `<main class="survey-wrap survey-online-lobby" aria-labelledby="survey-online-lobby-title">
       <header class="survey-online-heading">
-        <div><h1 id="survey-online-lobby-title">Комната ожидания</h1><p class="survey-muted" role="status">Подключились ${connected} из ${seats}</p></div>
+        <div class="survey-online-overview">
+          <h1 id="survey-online-lobby-title" tabindex="-1">Комната ожидания</h1>
+          <p class="survey-muted" role="status">Подключились ${connected} из ${seats}</p>
+          ${unassigned.length ? `<ul class="survey-online-unassigned" aria-label="Игроки без команды" role="list">
+            ${unassigned.map((member) => `<li>${memberMarkup(member)}</li>`).join("")}
+          </ul>` : ""}
+        </div>
         <div class="survey-online-invites">
           <label class="survey-online-code">Код комнаты <input aria-label="Код комнаты" value="${escape(code)}" readonly></label>
           <div class="survey-online-copy">
@@ -325,18 +404,19 @@ export function createSurveyLobby(app: HTMLElement, onUpdate: () => void) {
         </div>
       </header>
       <div class="survey-online-teams">
-        ${roster.map(({ name, players, capacity, fruit }) => `<section class="survey-online-team survey-team-${fruit}" aria-label="${escape(name)}">
+        ${roster.map(({ name, players, capacity, fruit, seats: teamSeats }) => `<section class="survey-online-team survey-team-${fruit}" aria-label="${escape(name)}">
           <h2>${renderFruit(fruit)}${escape(name)}</h2>
-          <ol>${Array.from({ length: capacity }, (_, seat) => {
-            const member = players[seat];
-            if (!member) return '<li class="survey-online-empty">Свободное место</li>';
-            const tag = [member.id === you ? "Вы" : "", member.id === owner ? "Ведущий" : "", member.connected ? "" : "Переподключается"]
-              .filter(Boolean).join(" · ");
-            return `<li><strong>${escape(member.name)}</strong>${tag ? `<span>${tag}</span>` : ""}</li>`;
+          <ol>${teamSeats.map((member, seat) => {
+            if (member) return `<li class="survey-online-member" tabindex="-1" data-room-occupied-seat
+              data-room-team="${fruit}" data-room-seat="${seat}">${memberMarkup(member, fruit)}</li>`;
+            if (!hasSeatSelection) return '<li class="survey-online-empty">Свободное место</li>';
+            return `<li class="survey-online-empty has-seat-button"><button class="survey-online-take-seat" type="button"
+              data-room-action="take-seat" data-room-team="${fruit}" data-room-seat="${seat}"
+              aria-label="Занять место ${seat + 1} в команде «${escape(name)}»" ${canEdit ? "" : "disabled"}>Свободное место</button></li>`;
           }).join("")}</ol>
           ${isHost ? `<div class="survey-online-slot-actions" aria-label="Места команды «${escape(name)}»" role="group">
             <button class="survey-button secondary-action" type="button" data-room-action="remove-slot" data-room-team="${fruit}"
-              aria-label="Убрать место: ${escape(name)}" ${canEdit && capacity > Math.max(SURVEY_MIN_TEAM_SIZE, players.length) ? "" : "disabled"}>− Место</button>
+              aria-label="Убрать место: ${escape(name)}" ${canEdit && occupied < seats && capacity > Math.max(SURVEY_MIN_TEAM_SIZE, players.length) ? "" : "disabled"}>− Место</button>
             <button class="survey-button secondary-action" type="button" data-room-action="add-slot" data-room-team="${fruit}"
               aria-label="Добавить место: ${escape(name)}" ${canEdit && capacity < SURVEY_MAX_TEAM_SIZE ? "" : "disabled"}>+ Место</button>
           </div>${roster.length > SURVEY_TEAM_COUNTS[0] ? `<button class="survey-online-remove-team" type="button"
@@ -347,9 +427,11 @@ export function createSurveyLobby(app: HTMLElement, onUpdate: () => void) {
       ${isHost && roster.length < SURVEY_TEAM_COUNTS[1] ? `<button class="survey-button secondary-action survey-online-add-team"
         type="button" data-room-action="add-team" ${canEdit ? "" : "disabled"}>Добавить команду</button>` : ""}
       <footer class="survey-online-footer">
-        <p class="survey-muted">${canStart ? isHost ? "Можно начинать." : "Ожидаем запуска от ведущего." : "Для старта нужно минимум два игрока в каждой команде."}</p>
+        <p class="survey-muted">${startMessage}</p>
         <div class="survey-dialog-actions">
           ${room || pending ? '<button class="survey-button secondary-action" type="button" data-room-action="leave">Выйти из комнаты</button>' : ""}
+          ${isHost && hasSeatSelection ? `<button class="survey-button secondary-action" type="button"
+            data-room-action="shuffle-teams" ${canManage ? "" : "disabled"}>Распределить случайно</button>` : ""}
           ${isHost ? `<button class="survey-button primary-action" type="button" data-room-action="start" ${canStart && room && !pending ? "" : "disabled"}>Начать игру</button>` : ""}
         </div>
       </footer>
@@ -399,18 +481,45 @@ export function createSurveyLobby(app: HTMLElement, onUpdate: () => void) {
     if (!(event.target instanceof Element)) return;
     const button = event.target.closest<HTMLButtonElement>("button[data-room-action]");
     if (!button || button.disabled) return;
-    switch (button.dataset.roomAction) {
+    const { roomAction, roomTeam, roomSeat, roomMember } = button.dataset;
+    switch (roomAction) {
       case "create": case "join":
-        mode = button.dataset.roomAction;
+        mode = roomAction;
         error = "";
         updateDialog();
         break;
       case "close": close(); break;
       case "start": send({ type: "start" }); break;
       case "add-team": send({ type: "add-team" }); break;
-      case "remove-team": send({ type: "remove-team", team: Number(button.dataset.roomTeam) }); break;
-      case "add-slot": send({ type: "resize-team", team: Number(button.dataset.roomTeam), delta: 1 }); break;
-      case "remove-slot": send({ type: "resize-team", team: Number(button.dataset.roomTeam), delta: -1 }); break;
+      case "remove-team": send({ type: "remove-team", team: Number(roomTeam) }); break;
+      case "add-slot": send({ type: "resize-team", team: Number(roomTeam), delta: 1 }); break;
+      case "remove-slot": send({ type: "resize-team", team: Number(roomTeam), delta: -1 }); break;
+      case "take-seat": send({ type: "take-seat", team: Number(roomTeam), seat: Number(roomSeat) }); break;
+      case "manage-member":
+        if (!roomMember) break;
+        selectMember(managedMember === roomMember ? null : roomMember);
+        redrawRoom();
+        break;
+      case "move-member":
+        if (!roomMember || managedMember !== roomMember) break;
+        selectMember(null);
+        send({ type: "move-player", memberId: roomMember, team: Number(roomTeam), seat: Number(roomSeat) });
+        break;
+      case "ask-kick":
+      case "cancel-kick":
+        if (!roomMember || managedMember !== roomMember) break;
+        confirmingKick = roomAction === "ask-kick";
+        redrawRoom(confirmingKick ? "cancel-kick" : "ask-kick", roomMember);
+        break;
+      case "kick-member":
+        if (!roomMember || managedMember !== roomMember || !confirmingKick) break;
+        selectMember(null);
+        send({ type: "kick-player", memberId: roomMember });
+        break;
+      case "shuffle-teams":
+        selectMember(null);
+        send({ type: "shuffle-teams" });
+        break;
       case "copy-code": void copy("code"); break;
       case "copy-link": void copy("link"); break;
       case "retry": void reconnect(); break;

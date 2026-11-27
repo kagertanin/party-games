@@ -2,6 +2,7 @@ import type { TurnResult } from "../src/survey/survey";
 
 export const SURVEY_ROOM = "survey";
 export const SURVEY_CODE = /^S[0-9A-F]{6}$/;
+export const SURVEY_KICKED_CODE = 4010;
 export const SURVEY_TEAM_COUNTS = [2, 3] as const;
 export const SURVEY_TEAM_SIZES = [2, 3, 4, 5] as const;
 export const SURVEY_MIN_TEAM_SIZE = SURVEY_TEAM_SIZES[0];
@@ -13,6 +14,7 @@ export type SurveyTeamView = {
   name: string;
   score: number;
   players: SurveyMember[];
+  seats?: (SurveyMember | null)[];
   capacity?: number;
   fruitIndex?: number;
 };
@@ -50,15 +52,28 @@ export type SurveyRoomView = {
   teamCount: number;
   teamSize: number;
   teams: SurveyTeamView[];
+  unassigned: SurveyMember[];
   serverNow: number;
   match: SurveyMatchView | null;
 };
+
+export function canStartSurvey(
+  teams: readonly { players: readonly SurveyMember[] }[],
+  unassigned: readonly SurveyMember[],
+): boolean {
+  return unassigned.every(({ connected }) => !connected) && teams.every(({ players }) =>
+    players.filter(({ connected }) => connected).length >= SURVEY_MIN_TEAM_SIZE);
+}
 
 export type SurveyOnlineAction =
   | { type: "start" }
   | { type: "add-team" }
   | { type: "remove-team"; team: number }
   | { type: "resize-team"; team: number; delta: -1 | 1 }
+  | { type: "take-seat"; team: number; seat: number }
+  | { type: "move-player"; memberId: string; team: number; seat: number }
+  | { type: "kick-player"; memberId: string }
+  | { type: "shuffle-teams" }
   | ({ phaseId: number } & (
       | { type: "question"; id: number }
       | { type: "ready" }
