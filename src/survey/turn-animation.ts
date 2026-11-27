@@ -1,3 +1,4 @@
+import { playSound } from "../audio/sound";
 import type { TurnResult } from "./survey";
 
 type TurnAnimationElements = {
@@ -88,6 +89,7 @@ export async function animateTurnResult(
   const view = root.ownerDocument.defaultView;
   const end = delay(duration, signal);
   if (!view || view.matchMedia("(prefers-reduced-motion: reduce)").matches || duration < 240) {
+    if (!signal?.aborted) playSound(result.kind === "hit" ? "points" : "miss");
     reveal();
     award();
     markTurn();
@@ -105,6 +107,7 @@ export async function animateTurnResult(
   const destination = center((result.kind === "hit" ? tile : checkpoint)?.getBoundingClientRect(), view);
   function flyAnswer(from: Point, to: Point, milliseconds: number) {
     if (answer) answer.style.opacity = "0";
+    playSound("flight");
     return fly(root, "answer", result.text, fruit, from, to, milliseconds, signal);
   }
   if (result.kind !== "hit") {
@@ -114,7 +117,7 @@ export async function animateTurnResult(
         if (!signal?.aborted) await flyAnswer(origin, destination, duration * .51);
       }
     } finally {
-      if (!signal?.aborted) markTurn();
+      if (!signal?.aborted) { playSound("miss"); markTurn(); }
     }
     return end;
   }
@@ -146,7 +149,7 @@ export async function animateTurnResult(
     }
   } finally {
     tile?.classList.remove("survey-flipping");
-    if (!signal?.aborted) award();
+    if (!signal?.aborted) { playSound("points"); award(); }
   }
 
   if (score && !signal?.aborted) {

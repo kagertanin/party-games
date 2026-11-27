@@ -1,3 +1,4 @@
+import { playSound } from "../audio/sound";
 import { Client, type Room } from "colyseus.js";
 import {
   drawIntro,
@@ -215,6 +216,7 @@ export function mountDraw(app: HTMLElement) {
       results: "Итоги партии",
       lobby: "",
     };
+    playSound("turn");
     transitioning = true;
     stage.inert = header.inert = true;
     drawer?.dispose(v.phase !== "drawing");

@@ -23,7 +23,7 @@ body {
 
 .game-patches {
   display: grid;
-  grid-template-columns: 510fr 345fr 355fr 375fr;
+  grid-template-columns: 510fr 355fr 375fr 345fr;
   align-items: start;
   list-style: none;
   padding: 0;
@@ -80,3 +80,13 @@ a.game-patch:focus-visible {
     object-fit: contain;
   }
 }
+
+.hat-preview { position: relative; }
+.hat-tip {
+  position: absolute; left: 50%; bottom: 12%; transform: translateX(-50%);
+  pointer-events: none; opacity: 0; white-space: nowrap;
+  background: #fff3df; border: 1px dashed #8e7b9b; border-radius: .65rem;
+  padding: .35em .7em; color: #37295c; font: italic 650 1rem/1.2 system-ui, sans-serif;
+  box-shadow: 0 2px 5px #30205026;
+}
+.hat-preview:hover .hat-tip, .hat-preview:focus-visible .hat-tip { opacity: 1; }

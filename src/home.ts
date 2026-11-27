@@ -19,11 +19,6 @@ export function mountHome(app: HTMLElement) {
           </a>
         </li>
         <li>
-          <button type="button" class="game-patch" disabled>
-            <img src="${hat}" width="345" height="640" alt="Шляпа">
-          </button>
-        </li>
-        <li>
           <a class="game-patch" href="?game=draw">
             <img src="${draw}" width="355" height="640" alt="Рисовач">
           </a>
@@ -32,6 +27,12 @@ export function mountHome(app: HTMLElement) {
           <a class="game-patch" href="?game=hide">
             <img src="${hide}" width="375" height="640" alt="Прятки">
           </a>
+        </li>
+        <li class="hat-preview" tabindex="0" aria-label="Шляпа — в разработке">
+          <button type="button" class="game-patch" disabled>
+            <img src="${hat}" width="345" height="640" alt="Шляпа">
+          </button>
+          <span class="hat-tip" aria-hidden="true">В разработке</span>
         </li>
       </ul>
     </main>`;

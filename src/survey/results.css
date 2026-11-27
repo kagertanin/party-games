@@ -342,3 +342,13 @@
   .survey-result-details-head p { font-size: .9rem; }
   .survey-award-evidence { max-height: 12rem; }
 }
+
+@media (prefers-reduced-motion: no-preference) {
+  .finale-arrival .survey-result-patch { transform-origin: bottom; animation: podium-rise .6s cubic-bezier(.22,.75,.3,1) both; }
+  .finale-arrival [data-place="1"] .survey-result-patch { animation-delay: .09s; }
+  @keyframes podium-rise {
+    from { opacity: .35; transform: translateY(9px) scale(.96); }
+    70% { transform: translateY(-3px) scale(1.015); }
+    to { opacity: 1; transform: none; }
+  }
+}

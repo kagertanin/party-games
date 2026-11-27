@@ -1,3 +1,4 @@
+import { playSound } from "../audio/sound";
 import "./demo.css";
 import gamesLogo from "../home-art/logo.webp";
 import surveyTitlePatch from "./art/survey-title.webp";
@@ -385,13 +386,26 @@ export function mountSurveyDemo(app: HTMLElement) {
     </main>`;
   }
 
+  let lastSoundRound = "";
+  let showingFinale = false;
+
   function render() {
     cancelHold();
     syncAnswerAward();
     const room = lobby.view;
     const live = room?.match;
     const match = room && live ? displayOnlineMatch(room, live) : game;
-    if (match?.phase !== "results") resultsUi.reset();
+    const upcomingFinale = match?.phase === "results";
+    const celebrate = upcomingFinale && !showingFinale;
+    showingFinale = upcomingFinale;
+    if (!match) lastSoundRound = "";
+    if (match?.phase === "turn" && !questionBallot && !changingQuestion && !resolving &&
+        (!live || live.phase === "ready" || live.phase === "turn")) {
+      const round = match.questionIndex + "." + Math.floor(match.turnIndex / match.teams.length);
+      if (lastSoundRound !== round) playSound("turn");
+      lastSoundRound = round;
+    }
+    if (!upcomingFinale) resultsUi.reset();
     app.classList.add("survey-app");
     app.classList.toggle("is-landing", !match && !room);
     app.innerHTML = `
@@ -421,6 +435,10 @@ export function mountSurveyDemo(app: HTMLElement) {
             ${changingQuestion ? "" : turnPanel(match)}`}
           </div>
         </main>`}`;
+    if (celebrate) {
+      playSound("cheer");
+      app.querySelector(".survey-result-podium")?.classList.add("finale-arrival");
+    }
   }
 
   function updateOnline() {

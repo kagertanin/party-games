@@ -1,3 +1,4 @@
+import { playSound } from "../audio/sound";
 import type { DrawView, RevealAward, RevealFrame } from "../../shared/draw";
 import { escape } from "../rooms/ui";
 
@@ -158,6 +159,7 @@ export function mountReveal(
       flight.onfinish = () => {
         chip.remove();
         flights.delete(flight);
+        playSound("points", index);
         scores.set(a.player, scores.get(a.player)! + a.amount);
         row.children[2].textContent = fmt(scores.get(a.player)!);
         row.children[2].animate(

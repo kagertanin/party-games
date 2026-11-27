@@ -1,3 +1,6 @@
+import { mountSoundControl } from "./audio/control";
+mountSoundControl();
+
 const app = document.querySelector<HTMLDivElement>("#app")!;
 
 async function loadGame() {

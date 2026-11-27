@@ -1,0 +1,24 @@
+.fabric-sound {
+  position: fixed; z-index: 150; inset: max(8px, env(safe-area-inset-top)) max(9px, env(safe-area-inset-right)) auto auto;
+  display: flex; flex-direction: column; align-items: center; color: #302263;
+}
+.fabric-sound .fabric-speaker, #fabric-volume-panel {
+  box-sizing: border-box; background: #fff3de url("../survey/art/weave.webp") repeat center / 84px;
+  border: 1.5px dashed #9789aa; border-radius: 14px 12px 15px 11px;
+  box-shadow: 0 2px 4px #30205025;
+}
+.fabric-sound .fabric-speaker {
+  width: 42px; height: 42px; display: grid; place-items: center; padding: 8px; color: #302263; cursor: pointer;
+}
+.fabric-speaker svg { width: 23px; height: 23px; }
+.fabric-speaker .volume-cross, .fabric-sound.is-muted .volume-waves { display: none; }
+.fabric-sound.is-muted .volume-cross { display: block; }
+#fabric-volume-panel { padding: 9px 0; width: 42px; height: 120px; margin-top: 0; text-align: center; }
+#fabric-volume-panel[hidden] { display: none; }
+#fabric-volume-panel input {
+  box-sizing: border-box; writing-mode: vertical-lr; direction: rtl;
+  accent-color: #503584; width: 28px; height: 100%; margin: 0; padding: 0; cursor: pointer;
+}
+.fabric-sound :focus-visible { outline: 3px solid #93742a; outline-offset: 2px; }
+#app.survey-app .survey-header { padding-inline-end: max(62px, calc(env(safe-area-inset-right) + 60px)); }
+#app .topbar { padding-inline-end: max(62px, calc(env(safe-area-inset-right) + 60px)); }
