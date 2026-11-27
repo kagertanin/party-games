@@ -1,17 +1,29 @@
+import type { Shot } from "../../shared/hide/shot";
 import { Client, type Room } from "colyseus.js";
 import { type Snapshot } from "../../shared/hide/world";
+import { isHideSetting, settingLimits, validSetting, type HideSettings } from "../../shared/hide/settings";
 import { createScene } from "./scene";
 import "./hide.css";
 
+const settingLabels: Record<keyof HideSettings, string> = {
+  hideSeconds: "До выхода водящих, сек",
+  huntSeconds: "Время охоты, сек",
+  shotsPerHunter: "Выстрелов на водящего за раунд",
+};
+const settingFields = (Object.keys(settingLabels) as (keyof HideSettings)[]).map(key =>
+  `<label>${settingLabels[key]}<input type="number" required data-setting="${key}" min="1" max="${settingLimits[key]}" step="1"></label>`,
+).join("");
+
 export function mount(app: HTMLElement) {
   app.innerHTML =
-    '<main class="hide-game"><canvas></canvas><div class="hide-hud"></div><div class="hide-aim"></div><div class="hide-touch"><div class="stick">✥</div><button class="action">Действие</button></div><section class="hide-panel"></section><output></output></main>';
+    '<main class="hide-game"><canvas></canvas><div class="hide-hud"></div><div class="hide-aim"></div><div class="hide-touch"><div class="stick">✥</div><button class="jump" hidden>Прыжок</button><button class="action">Действие</button></div><section class="hide-panel"></section><output></output></main>';
   const root = app.querySelector("main")!,
     panel = root.querySelector("section")!,
     canvas = root.querySelector("canvas")!,
     hud = root.querySelector<HTMLElement>(".hide-hud")!,
     out = root.querySelector("output")!;
   const action = root.querySelector<HTMLButtonElement>(".action")!;
+  const jump = root.querySelector<HTMLButtonElement>(".jump")!;
   const code = new URL(location.href).searchParams.get("room");
   const client = new Client(
     import.meta.env.VITE_SERVER_URL ||
@@ -82,6 +94,7 @@ export function mount(app: HTMLElement) {
     const url = new URL(location.href);
     url.searchParams.set("room", r.roomId);
     history.replaceState(null, "", url);
+    r.onMessage("shot", (shot: Shot) => scene?.shot(shot));
     r.onMessage("feedback", (s: string) => notify(s));
     r.onMessage("view", (v: Snapshot) => {
       view = v;
@@ -126,14 +139,17 @@ export function mount(app: HTMLElement) {
       ? "play:" + me.hunter + ":" + me.alive
       : JSON.stringify([
           ready, sceneFailed, v.phase, v.winner, v.host,
+          v.phase === "lobby" && v.settings,
           v.phase === "lobby" && v.players.map((p) => [p.id, p.name, p.hunter, p.online]),
         ]);
     if (stamp === signature) return;
     stamp = signature;
     root.dataset.play = String(play);
+    root.dataset.results = String(ready && v.phase === "results");
     panel.hidden = play;
     action.textContent = me.hunter ? "Выстрел" : "Скопировать";
     action.hidden = !me.alive;
+    jump.hidden = !play || me.hunter || !me.alive;
     if (play) return;
     if (document.pointerLockElement) document.exitPointerLock();
     if (!ready) {
@@ -162,10 +178,27 @@ export function mount(app: HTMLElement) {
         v.players.some((p) => p.hunter) &&
         v.players.some((p) => !p.hunter) &&
         v.players.every((p) => p.online);
-    panel.innerHTML =
-      '<a href="/">Все игры</a><h1>Прятки</h1><p>Brightline Offices · ' +
-      v.players.length +
-      ' / 12</p><button id="invite">Скопировать приглашение</button><ul>' +
+    // Keep the controls mounted while players join or change sides.
+    // Rebuilding them would discard a partially typed setting on a lobby update.
+    if (!panel.querySelector(".hide-settings")) {
+      panel.innerHTML = '<a href="/">Все игры</a><h1>Прятки</h1><p class="hide-count"></p>' +
+        '<button id="invite">Скопировать приглашение</button><ul></ul>' +
+        '<p>Нажмите на роль, чтобы сменить сторону. Для старта нужен хотя бы один игрок с каждой стороны.</p>' +
+        '<fieldset class="hide-settings"><legend>Настройки раунда</legend>' + settingFields + '</fieldset>' +
+        '<button id="start">Начать раунд</button><p class="hide-start-wait">Ожидаем старта</p>';
+    }
+    panel.querySelector(".hide-count")!.textContent = "Brightline Offices · " + v.players.length + " / 12";
+    const settings = panel.querySelector<HTMLFieldSetElement>(".hide-settings")!;
+    settings.disabled = !host;
+    for (const field of settings.querySelectorAll<HTMLInputElement>("input")) {
+      const key = field.dataset.setting;
+      if (isHideSetting(key) && field !== document.activeElement) field.value = String(v.settings[key]);
+    }
+    const start = panel.querySelector<HTMLButtonElement>("#start")!;
+    start.hidden = !host;
+    start.disabled = !canStart;
+    panel.querySelector<HTMLElement>(".hide-start-wait")!.hidden = host;
+    panel.querySelector("ul")!.innerHTML =
       v.players
         .map(
           (p) =>
@@ -181,14 +214,21 @@ export function mount(app: HTMLElement) {
             (p.hunter ? "Водит" : "Прячется") +
             "</button></li>",
         )
-        .join("") +
-      "</ul><p>Нажмите на роль, чтобы сменить сторону. Для старта нужен хотя бы один игрок с каждой стороны.</p>" +
-      (host
-        ? '<button id="start" ' +
-          (canStart ? "" : "disabled") +
-          ">Начать раунд</button>"
-        : "<p>Ожидаем старта</p>");
+        .join("");
   }
+  panel.addEventListener("change", (event) => {
+    const field = event.target;
+    if (!(field instanceof HTMLInputElement) || !room || !view || view.phase !== "lobby" || room.sessionId !== view.host) return;
+    const key = field.dataset.setting;
+    if (!isHideSetting(key)) return;
+    const value = field.valueAsNumber;
+    if (!validSetting(key, value)) {
+      notify(`Введите целое число от 1 до ${settingLimits[key]}`);
+      field.value = String(view.settings[key]);
+      return;
+    }
+    room.send("settings", { key, value });
+  });
   panel.addEventListener("click", async (e) => {
     const b = (e.target as HTMLElement).closest("button");
     if (!b || !room || !view) return;
@@ -221,7 +261,7 @@ export function mount(app: HTMLElement) {
     const status =
       (me.alive
         ? me.hunter
-          ? "Водящий · " + me.ammo + "/6"
+          ? "Водящий · Патроны " + me.ammo + "/" + view.settings.shotsPerHunter
           : "Прячетесь"
         : "Наблюдение") +
       "   " +
@@ -232,7 +272,7 @@ export function mount(app: HTMLElement) {
     const hint = matchMedia("(pointer:coarse)").matches
       ? "Слева — движение, справа — обзор"
       : "WASD — движение · мышь — обзор · " +
-        (me.hunter ? "ЛКМ — выстрел" : "E — скопировать") +
+        (me.hunter ? "ЛКМ — выстрел" : "пробел — прыжок · E — скопировать") +
         " · щёлкните для захвата мыши";
     if (hud.dataset.hint !== hint) hud.dataset.hint = hint;
   }, 150);
@@ -252,6 +292,7 @@ export function mount(app: HTMLElement) {
   };
   pad.onlostpointercapture = e => scene?.joystick(0, 0, e.timeStamp);
   action.onclick = () => scene?.action();
+  jump.onpointerdown = (e) => { e.preventDefault(); scene?.jump(); };
   window.addEventListener("pagehide", () => room?.connection.close());
   async function resume(token: string) {
     panel.innerHTML = "<h1>Возвращаемся в комнату…</h1>";

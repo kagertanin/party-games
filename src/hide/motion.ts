@@ -12,6 +12,7 @@ export class LocalMotion {
   private partialInput?: Input;
   private offsetX = 0;
   private offsetZ = 0;
+  private offsetY = 0;
 
   constructor(player: Player, ack = 0) {
     this.player = { ...player };
@@ -34,6 +35,7 @@ export class LocalMotion {
     const decay = Math.exp(-18 * dt);
     this.offsetX *= decay;
     this.offsetZ *= decay;
+    this.offsetY *= decay;
     let remaining = dt;
     while (remaining > 1e-10 && this.pending.length < 240) {
       // A partly displayed step must finish with the same controls. Changing
@@ -71,8 +73,9 @@ export class LocalMotion {
     for (const move of this.pending) walk(corrected, move, STEP_SECONDS);
     this.offsetX += this.player.x - corrected.x;
     this.offsetZ += this.player.z - corrected.z;
-    if (Math.hypot(this.offsetX, this.offsetZ) > 1.5)
-      this.offsetX = this.offsetZ = 0;
+    this.offsetY += (this.player.y ?? 0) - (corrected.y ?? 0);
+    if (Math.hypot(this.offsetX, this.offsetY, this.offsetZ) > 1.5)
+      this.offsetX = this.offsetY = this.offsetZ = 0;
     this.player = corrected;
   }
 
@@ -85,11 +88,14 @@ export class LocalMotion {
       const blend = this.fraction / STEP_SECONDS;
       pose.x = this.player.x + (pose.x - this.player.x) * blend;
       pose.z = this.player.z + (pose.z - this.player.z) * blend;
+      const feet = this.player.y ?? 0;
+      pose.y = feet + ((pose.y ?? 0) - feet) * blend;
     } else {
       walk(pose, input, 0);
     }
     pose.x += this.offsetX;
     pose.z += this.offsetZ;
+    pose.y = (pose.y ?? 0) + this.offsetY;
     return pose;
   }
 }
@@ -154,6 +160,7 @@ export class RemoteMotion {
     const t = Math.max(0, Math.min(1, (time - a.now) / (b.now - a.now)));
     return { ...to, x: from.x + (to.x - from.x) * t,
       z: from.z + (to.z - from.z) * t,
+      y: (from.y ?? 0) + ((to.y ?? 0) - (from.y ?? 0)) * t,
       yaw: angleBetween(from.yaw, to.yaw, t),
       pitch: from.pitch + (to.pitch - from.pitch) * t,
       facing: angleBetween(from.facing, to.facing, t) };

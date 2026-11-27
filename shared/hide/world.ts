@@ -1,3 +1,4 @@
+import type { HideSettings } from "./settings.js";
 import office from "./office.json" with { type: "json" };
 import catalogue from "./models.json" with { type: "json" };
 
@@ -5,12 +6,17 @@ export { office };
 export const models: Record<string, typeof catalogue.food_mug> = catalogue;
 export type Phase = "lobby" | "hide" | "hunt" | "results";
 export interface Player {
+  foundAt?: number;
   id: string;
   name: string;
   hunter: boolean;
   alive: boolean;
   online: boolean;
   x: number;
+  /** Feet above the office floor, in metres. */
+  y?: number;
+  vy?: number;
+  lastJump?: number;
   z: number;
   yaw: number;
   pitch: number;
@@ -19,6 +25,7 @@ export interface Player {
   ammo: number;
 }
 export interface Snapshot {
+  settings: HideSettings;
   ack: number;
   players: Player[];
   host: string;
@@ -29,6 +36,8 @@ export interface Snapshot {
   remaining: number;
 }
 export interface Input {
+  /** Increments once per distinct jump press. */
+  jump?: number;
   forward: number;
   side: number;
   yaw: number;
@@ -71,12 +80,13 @@ office.props.forEach((p, i) => {
     bounds([p.at[0], p.at[1] + s[1] / 2, p.at[2]], s, (p.yaw ?? 0) * rad, i),
   );
 });
-// Pads each cell by the longest nearby query: the third-person camera boom.
-// One lookup then covers both the boom and the player's (smaller) collision radius.
+// A single cell covers every obstacle reachable by the interaction ray,
+// the camera boom or the player's collision radius.
 const cellSize = 4;
 export const cameraBoom = 2.8;
-const cameraMargin = 0.08;
-const padding = cameraBoom + cameraMargin;
+export const copyRange = 4;
+const cameraMargin = 0.1;
+const padding = Math.max(copyRange, cameraBoom + 2 * cameraMargin);
 const grid = new Map<string, Bounds[]>();
 const cell = (v: number) => Math.floor(v / cellSize);
 const cellKey = (x: number, z: number) => x + ":" + z;
@@ -99,15 +109,15 @@ function near(x: number, z: number) {
 export function cameraDistance(at: number[], dir: number[]) {
   let distance = cameraBoom;
   for (const o of near(at[0], at[2]))
-    distance = Math.min(distance, intersect(at, dir, o) - cameraMargin);
+    distance = Math.min(distance, intersect(at, dir, o, cameraMargin) - 0.015);
   return Math.max(0.01, distance);
 }
 export function body(p: Player) {
   const s = models[p.form]?.size ?? [0.52, 1.72, 0.52];
-  return bounds([p.x, s[1] / 2, p.z], s, p.facing, -2);
+  return bounds([p.x, (p.y ?? 0) + s[1] / 2, p.z], s, p.facing, -2);
 }
 export function eye(p: Player) {
-  return Math.max(0.23, (models[p.form]?.size[1] ?? 1.72) * 0.875);
+  return (p.y ?? 0) + Math.max(0.23, (models[p.form]?.size[1] ?? 1.72) * 0.875);
 }
 export function walk(p: Player, input: Input, seconds: number) {
   p.yaw = input.yaw;
@@ -119,27 +129,64 @@ export function walk(p: Player, input: Input, seconds: number) {
     (Math.cos(p.yaw) * input.side - Math.sin(p.yaw) * input.forward) * speed;
   const dz =
     (-Math.sin(p.yaw) * input.side - Math.cos(p.yaw) * input.forward) * speed;
-  if (!dx && !dz) return;
-  if (fits(p, p.x + dx, p.z)) p.x += dx;
-  if (fits(p, p.x, p.z + dz)) p.z += dz;
+  if (dx && fits(p, p.x + dx, p.z)) p.x += dx;
+  if (dz && fits(p, p.x, p.z + dz)) p.z += dz;
+  if (!p.hunter && seconds > 0) stepHeight(p, input, seconds);
 }
+
+function footprintRadius(p: Player) {
+  const size = models[p.form]?.size;
+  return Math.max(0.09, Math.min(0.75, (size ? Math.max(size[0], size[2]) : 0.52) * 0.425));
+}
+
+function overlapsFootprint(x: number, z: number, radius: number, o: Bounds) {
+  const dx = x - o.x, dz = z - o.z;
+  const outsideX = Math.max(0, Math.abs(dx * o.cosine - dz * o.sine) - o.w);
+  const outsideZ = Math.max(0, Math.abs(dx * o.sine + dz * o.cosine) - o.d);
+  return outsideX * outsideX + outsideZ * outsideZ < radius * radius;
+}
+
+const contactEpsilon = 1e-5;
+const gravity = 16;
+const jumpSpeed = 5.1; // A single press rises about 0.81 metres; later presses reset the impulse.
+
+function stepHeight(p: Player, input: Input, dt: number) {
+  const feet = p.y ?? 0;
+  let speed = p.vy ?? 0;
+  if ((input.jump ?? 0) > (p.lastJump ?? 0)) {
+    p.lastJump = input.jump;
+    speed = jumpSpeed;
+  }
+  // Ground-level horizontal movement is the most common case.
+  if (feet === 0 && speed === 0) return;
+  const height = models[p.form]?.size[1] ?? 1.72;
+  const radius = footprintRadius(p);
+  const next = feet + speed * dt - 0.5 * gravity * dt * dt;
+  let limit = next >= feet ? Infinity : 0;
+  for (const o of near(p.x, p.z)) {
+    if (next >= feet) {
+      const clearance = o.y - o.h - height;
+      if (clearance < feet - contactEpsilon || clearance > next || clearance >= limit) continue;
+      if (overlapsFootprint(p.x, p.z, radius, o)) limit = clearance;
+    } else {
+      const top = o.y + o.h;
+      if (top > feet + contactEpsilon || top < next || top <= limit) continue;
+      if (overlapsFootprint(p.x, p.z, radius, o)) limit = top;
+    }
+  }
+  const stopped = next >= feet ? next >= limit : next <= limit;
+  p.y = stopped ? limit : next;
+  p.vy = stopped ? 0 : speed - gravity * dt;
+}
+
 export function fits(p: Player, x: number, z: number) {
   if (Math.abs(x) > 49 || Math.abs(z) > 44) return false;
-  const b = body(p);
-  const radius = Math.max(0.09, Math.min(0.75, Math.max(b.w, b.d) * 0.85));
-  return !near(x, z).some((o) => {
-    if (o.y + o.h < 0.075 || o.y - o.h >= 2 * b.h - 0.02) return false;
-    const dx = x - o.x,
-      dz = z - o.z,
-      c = o.cosine,
-      s = o.sine;
-    return (
-      Math.hypot(
-        Math.max(0, Math.abs(dx * c - dz * s) - o.w),
-        Math.max(0, Math.abs(dx * s + dz * c) - o.d),
-      ) < radius
-    );
-  });
+  const feet = p.y ?? 0;
+  const head = feet + (models[p.form]?.size[1] ?? 1.72);
+  const radius = footprintRadius(p);
+  return !near(x, z).some(o =>
+    o.y + o.h > feet + contactEpsilon && o.y - o.h < head - contactEpsilon &&
+    overlapsFootprint(x, z, radius, o));
 }
 export function direction(yaw: number, pitch: number) {
   return [
@@ -148,14 +195,14 @@ export function direction(yaw: number, pitch: number) {
     -Math.cos(yaw) * Math.cos(pitch),
   ];
 }
-export function intersect(origin: number[], dir: number[], o: Bounds) {
+export function intersect(origin: number[], dir: number[], o: Bounds, margin = 0) {
   const c = o.cosine,
     s = o.sine,
     x = origin[0] - o.x,
     z = origin[2] - o.z;
   const pos = [x * c - z * s, origin[1] - o.y, x * s + z * c];
   const ray = [dir[0] * c - dir[2] * s, dir[1], dir[0] * s + dir[2] * c],
-    half = [o.w, o.h, o.d];
+    half = [o.w + margin, o.h + margin, o.d + margin];
   let near = 0,
     far = Infinity;
   for (let i = 0; i < 3; i++) {
@@ -171,15 +218,15 @@ export function intersect(origin: number[], dir: number[], o: Bounds) {
   }
   return near;
 }
-export function target(p: Player, players: Player[] = []) {
+export function target(p: Player, players: Player[] = [], range = Infinity) {
   const at = [p.x, eye(p), p.z],
     dir = direction(p.yaw, p.pitch);
   let distance = Infinity,
     prop = -1,
     id = "";
-  for (const o of obstacles) {
+  for (const o of range <= copyRange ? near(p.x, p.z) : obstacles) {
     const d = intersect(at, dir, o);
-    if (d < distance) {
+    if (d <= range && d < distance) {
       distance = d;
       prop = o.prop;
     }
@@ -187,7 +234,7 @@ export function target(p: Player, players: Player[] = []) {
   for (const other of players) {
     if (other.id === p.id || other.hunter || !other.alive) continue;
     const d = intersect(at, dir, body(other));
-    if (d < distance) {
+    if (d <= range && d < distance) {
       distance = d;
       id = other.id;
       prop = -1;
