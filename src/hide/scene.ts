@@ -1,79 +1,42 @@
+import { HideAudio } from "./audio";
+import { SoundWalls } from "./acoustics";
+import type { Point } from "../../shared/hide/shot";
 import * as T from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import {
-  office,
-  models,
   cameraBoom,
-  cameraDistance,
   copyRange,
   rad,
-  eye,
-  target,
   direction,
+  type HideWorld,
   type Player,
   type Snapshot,
   type Input,
 } from "../../shared/hide/world";
 
+import type { MapId } from "../../shared/hide/maps";
+import { sceneryPalette, lightScene } from "./scenery";
 import type { MoveBatch } from "../../shared/hide/movement";
 import { FoundEffect, ShotEffects, foundView, pistolArm } from "./shots";
 import { revealDuration, type Shot } from "../../shared/hide/shot";
 import { LocalMotion, RemoteMotion } from "./motion";
 
-const palette: Record<string, number> = {
-  concrete: 0xa8aeb5,
-  asphalt: 0x4a5158,
-  sidewalk: 0xb7bebc,
-  carpet: 0xa9b9c3,
-  paint: 0xffefdc,
-  wood: 0xba9978,
-  metal: 0x8495a1,
-  roof: 0x75868b,
-  ceiling: 0xeeeadc,
-  glass: 0xa7dbe2,
-  fabric: 0x779aa6,
-  flat: 0xe6e1ce,
-};
 export async function createScene(
   canvas: HTMLCanvasElement,
   id: string,
   send: (batch: MoveBatch) => void,
   use: (aim: Input, seen: number) => void,
+  world: HideWorld,
+  mapId: MapId,
+  signal: AbortSignal,
 ) {
-  const renderer = new T.WebGLRenderer({
-    canvas,
-    antialias: false,
-    powerPreference: "high-performance",
-  });
-  renderer.setPixelRatio(Math.min(devicePixelRatio, 1));
-  const scene = new T.Scene();
-  scene.background = new T.Color(0xc1dbe6);
-  const camera = new T.PerspectiveCamera(72, 1, 0.035, 175);
-  camera.rotation.order = "YXZ";
-  new ResizeObserver(([entry]) => {
-    const { width, height } = entry.contentRect;
-    if (!width || !height) return;
-    renderer.setSize(width, height, false);
-    camera.aspect = width / height;
-    camera.updateProjectionMatrix();
-  }).observe(canvas);
-  const sky = new T.HemisphereLight(0xfff3e0, 0xc3cbd5, 2);
-  scene.add(sky);
-  const sun = new T.DirectionalLight(0xffefd7, 2);
-  sun.position.set(-18, 32, 22);
-  scene.add(sun);
-  const firstPerson = pistolArm();
-  firstPerson.arm.position.set(0.23, -0.26, 0.02);
-  camera.add(firstPerson.arm);
-  scene.add(camera);
-  const effects = new ShotEffects(scene);
-  const recoilAt = new Map<string, number>();
+  const { level, models, eye, target, cameraDistance } = world;
   const templates = new Map<string, T.Object3D>();
   const data = await fetch(
-    new URL("../../shared/hide/office-models.bin", import.meta.url),
+    new URL(`../../shared/hide/${mapId}-models.bin`, import.meta.url), { signal },
   ).then((r) => {
-    if (!r.ok) throw Error("Модели офиса не загрузились");
+    if (!r.ok) throw Error("Модели карты не загрузились");
     return r.arrayBuffer();
   });
   const loader = new GLTFLoader();
@@ -97,6 +60,40 @@ export async function createScene(
       templates.set(key, holder);
     }),
   );
+  signal.throwIfAborted();
+  const audio = new HideAudio(new SoundWalls(level.boxes));
+  signal.addEventListener("abort", () => audio.reset(), { once: true });
+  const renderer = new T.WebGLRenderer({
+    canvas,
+    antialias: false,
+    powerPreference: "high-performance",
+  });
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 1));
+  const scene = new T.Scene();
+  scene.background = new T.Color(0xc1dbe6);
+  const camera = new T.PerspectiveCamera(72, 1, 0.035, 175);
+  camera.rotation.order = "YXZ";
+  const resize = new ResizeObserver(([entry]) => {
+    const { width, height } = entry.contentRect;
+    if (!width || !height) return;
+    renderer.setSize(width, height, false);
+    camera.aspect = width / height;
+    camera.updateProjectionMatrix();
+  });
+  resize.observe(canvas);
+  signal.addEventListener("abort", () => { resize.disconnect(); renderer.dispose(); }, { once: true });
+  const sky = new T.HemisphereLight(0xfff3e0, 0xc3cbd5, 2);
+  scene.add(sky);
+  const sun = new T.DirectionalLight(0xffefd7, 2);
+  sun.position.set(-18, 32, 22);
+  scene.add(sun);
+  lightScene(mapId, scene, sky, sun);
+  const firstPerson = pistolArm();
+  firstPerson.arm.position.set(0.23, -0.26, 0.02);
+  camera.add(firstPerson.arm);
+  scene.add(camera);
+  const effects = new ShotEffects(scene);
+  const recoilAt = new Map<string, number>();
   const boxGeo = new T.BoxGeometry(1, 1, 1),
     actor = new T.Group();
   function part(
@@ -117,10 +114,10 @@ export async function createScene(
   part(0.34, 0.35, 0.33, 1.5, 0xedbf98);
   part(0.36, 0.1, 0.35, 1.7, 0x44445c);
   for (const x of [-0.13, 0.13]) part(0.19, 0.62, 0.23, 0.32, 0x354256, x);
-  // Lighting and geometry in the office never move. Bake diffuse illumination
-  // into its vertices. Disguised players reuse the matching office geometry.
+  // Bake the level's static lighting into its vertices. Disguises reuse the same geometry.
   const sunlight = sun.position.clone().normalize();
   const normal = new T.Vector3();
+  const vertexColor = new T.Color();
   const light = new T.Color();
   const batches = new Map<
     string,
@@ -151,6 +148,7 @@ export async function createScene(
       }
       const geometry = node.geometry.clone().applyMatrix4(node.matrixWorld);
       const normals = geometry.getAttribute("normal");
+      const sourceColors = geometry.getAttribute("color");
       const colors = new Float32Array(normals.count * 3);
       for (let i = 0; i < normals.count; i++) {
         normal.fromBufferAttribute(normals, i);
@@ -161,6 +159,7 @@ export async function createScene(
         light.g += sun.color.g * diffuseSun;
         light.b += sun.color.b * diffuseSun;
         light.multiply(source.color).multiplyScalar((1 - 0.45 * source.metalness) / Math.PI);
+        if (source.vertexColors && sourceColors) light.multiply(vertexColor.fromBufferAttribute(sourceColors, i));
         light.toArray(colors, i * 3);
       }
       geometry.setAttribute("color", new T.BufferAttribute(colors, 3));
@@ -173,28 +172,29 @@ export async function createScene(
     });
   }
   const materials = new Map<string, T.MeshStandardMaterial>();
-  for (const b of office.boxes) {
+  for (const b of level.boxes) {
     const key = b.mat + ":" + b.tint;
     if (!materials.has(key)) {
-      const color = new T.Color(palette[b.mat] ?? 0xeeeeee);
+      const color = new T.Color(sceneryPalette[b.mat] ?? 0xeeeeee);
       if (b.tint) color.multiply(new T.Color().fromArray(b.tint));
       materials.set(
         key,
         new T.MeshStandardMaterial({
           color,
-          transparent: b.mat === "glass",
-          opacity: b.mat === "glass" ? 0.28 : 1,
-          depthWrite: b.mat !== "glass",
+          transparent: b.mat === "glass" || b.mat === "water",
+          opacity: b.mat === "glass" ? 0.28 : b.mat === "water" ? 0.62 : 1,
+          depthWrite: b.mat !== "glass" && b.mat !== "water",
           roughness: 0.9,
         }),
       );
     }
     const mesh = new T.Mesh(boxGeo, materials.get(key));
     mesh.position.fromArray(b.at);
+    mesh.rotation.y = (b.yaw ?? 0) * rad;
     mesh.scale.fromArray(b.size);
     collect(mesh);
   }
-  for (const p of office.props) {
+  for (const p of level.props) {
     const obj = new T.Group();
     obj.add(templates.get(p.id)!.clone());
     obj.position.fromArray(p.at);
@@ -214,7 +214,7 @@ export async function createScene(
   }
   for (const batch of batches.values()) {
     const geometry = mergeGeometries(batch.pieces);
-    if (!geometry) throw Error("Не удалось объединить модели офиса");
+    if (!geometry) throw Error("Не удалось объединить модели карты");
     scene.add(new T.Mesh(geometry, batch.material));
   }
   batches.clear();
@@ -240,6 +240,7 @@ export async function createScene(
   let lastHit: Shot | undefined;
   let receivedAt = performance.now();
   function shot(event: Shot) {
+    audio.shot(event);
     const now = performance.now();
     if (event.hit === id) lastHit = event;
     const muzzle = event.shooter === id ? firstPerson.muzzle : actors.get(event.shooter)?.weapon?.muzzle;
@@ -265,10 +266,11 @@ export async function createScene(
   }
   // Rendering can stall on a slow GPU. Transmit accumulated input independently
   // and let render frames, key events and the sender all share one time cursor.
-  window.setInterval(() => {
+  const sender = window.setInterval(() => {
     sample(performance.now());
     flush();
   }, 50);
+  signal.addEventListener("abort", () => clearInterval(sender), { once: true });
   function action() {
     sample(performance.now());
     flush();
@@ -286,15 +288,15 @@ export async function createScene(
     touchX = touchY = 0;
     flush();
   }
-  window.addEventListener("blur", stop);
+  window.addEventListener("blur", stop, { signal });
   document.addEventListener("visibilitychange", () => {
     prediction?.resetClock(performance.now());
-    if (document.hidden) stop();
-  });
+    if (document.hidden) { stop(); audio.reset(); }
+  }, { signal });
   let pointerClickAt = -Infinity;
   document.addEventListener("pointerlockchange", () => {
     if (!document.pointerLockElement) stop();
-  });
+  }, { signal });
   function looking(dx: number, dy: number, now: number) {
     sample(now);
     yaw -= dx * 0.0025;
@@ -308,7 +310,7 @@ export async function createScene(
         Math.hypot(e.movementX, e.movementY) > 48 &&
         Math.abs(e.movementX + e.clientX) <= 1 && Math.abs(e.movementY + e.clientY) <= 1) return;
     looking(e.movementX, e.movementY, e.timeStamp);
-  });
+  }, { signal });
   const movementKeys = new Set(["KeyW", "KeyA", "KeyS", "KeyD"]);
   window.addEventListener("keydown", (e) => {
     if (!prediction || e.repeat || e.target instanceof HTMLInputElement) return;
@@ -321,13 +323,13 @@ export async function createScene(
       jump(e.timeStamp);
     }
     if (e.code === "KeyE") action();
-  });
+  }, { signal });
   window.addEventListener("keyup", (e) => {
     if (!keys.has(e.code)) return;
     sample(e.timeStamp);
     keys.delete(e.code);
     flush();
-  });
+  }, { signal });
   canvas.addEventListener("mousedown", (e) => {
     if (e.button !== 0 || matchMedia("(pointer:coarse)").matches) return;
     pointerClickAt = e.timeStamp;
@@ -338,25 +340,26 @@ export async function createScene(
     if (self?.hunter) {
       action();
     }
-  });
+  }, { signal });
   let touch: { id: number; x: number; y: number } | undefined;
   canvas.addEventListener("pointerdown", (e) => {
     if (e.pointerType !== "mouse") {
       canvas.setPointerCapture(e.pointerId);
       touch = { id: e.pointerId, x: e.clientX, y: e.clientY };
     }
-  });
+  }, { signal });
   canvas.addEventListener("pointermove", (e) => {
     if (touch?.id === e.pointerId) {
       looking(e.clientX - touch.x, e.clientY - touch.y, e.timeStamp);
       touch.x = e.clientX;
       touch.y = e.clientY;
     }
-  });
-  canvas.addEventListener("pointerup", () => (touch = undefined));
+  }, { signal });
+  canvas.addEventListener("pointerup", () => (touch = undefined), { signal });
   function update(v: Snapshot) {
     const me = v.players.find((p) => p.id === id);
     if (!me) return;
+    if (v.phase === "lobby" && phase !== "lobby") audio.reset();
     if (me.alive) {
       revealView = undefined;
       lastHit = undefined;
@@ -368,7 +371,7 @@ export async function createScene(
         pitch = me.pitch;
       }
       self = { ...me };
-      prediction = active ? new LocalMotion(me, v.ack, v.players) : undefined;
+      prediction = active ? new LocalMotion(world, me, v.ack, v.players) : undefined;
       prediction?.resetClock(performance.now());
       jumpPress = me.lastJump ?? 0;
       if (me.alive || phase === "lobby") lastCameraFrame = 0;
@@ -383,8 +386,9 @@ export async function createScene(
     phase = v.phase;
     view = v;
   }
+  let frameId = 0;
   function frame() {
-    requestAnimationFrame(frame);
+    frameId = requestAnimationFrame(frame);
     const now = performance.now();
     if (
       !view || !self || document.hidden ||
@@ -408,7 +412,7 @@ export async function createScene(
     const kick = (who: string) => Math.max(0, 1 - (now - (recoilAt.get(who) ?? -Infinity)) / 140);
     firstPerson.arm.rotation.x = 0.14 * kick(follow.id);
     if (!follow.alive && !follow.hunter) {
-      revealView ??= foundView(follow, angle, lastHit);
+      revealView ??= foundView(world, follow, angle, lastHit);
       camera.position.copy(revealView.position);
       camera.lookAt(revealView.focus);
       reticle.style.translate = "";
@@ -447,6 +451,7 @@ export async function createScene(
     } else if (reticle.style.translate) {
       reticle.style.translate = "";
     }
+    audio.listener(follow.x, eye(follow), follow.z, camera.rotation.y, camera.rotation.x);
     for (const [key, a] of actors)
       if (!view.players.some((p) => p.id === key)) {
         a.found?.dispose();
@@ -473,6 +478,7 @@ export async function createScene(
         scene.add(obj);
       }
       const local = !p.alive ? p : p.id === id ? self : remotes.pose(p, renderedTime);
+      if (phase !== "results") audio.movement(local, now);
       a.obj.position.set(local.x, local.y ?? 0, local.z);
       a.obj.rotation.y = local.hunter ? local.yaw : local.facing;
       if (a.weapon) a.weapon.arm.rotation.x = local.pitch + 0.14 * kick(p.id);
@@ -495,8 +501,28 @@ export async function createScene(
     effects.update(now);
     renderer.render(scene, camera);
   }
+  signal.addEventListener("abort", () => {
+    cancelAnimationFrame(frameId);
+    for (const actor of actors.values()) actor.found?.dispose();
+    // Free every uploaded level buffer, including disguises used earlier in the round.
+    const geometries = new Set<T.BufferGeometry>();
+    const materials = new Set<T.Material>();
+    function collectResources(root: T.Object3D) {
+      root.traverse(node => {
+        if (!(node instanceof T.Mesh)) return;
+        geometries.add(node.geometry);
+        for (const material of Array.isArray(node.material) ? node.material : [node.material])
+          materials.add(material);
+      });
+    }
+    collectResources(scene);
+    for (const model of disguises.values()) collectResources(model);
+    for (const geometry of geometries) geometry.dispose();
+    for (const material of materials) material.dispose();
+  }, { once: true });
   frame();
   return {
+    cry: (point: Point) => audio.cry(point),
     jump,
     update,
     shot,

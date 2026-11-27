@@ -1,9 +1,10 @@
+import { officeWorld } from "./fixtures/hide-office.js";
 import { defaultHideSettings } from "../shared/hide/settings.js";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { LocalMotion, RemoteMotion } from "../src/hide/motion.js";
 import { STEP_SECONDS } from "../shared/hide/movement.js";
-import { walk, type Input, type Player, type Snapshot } from "../shared/hide/world.js";
+import { walk, type Input, type Player, type Snapshot } from "./fixtures/hide-office.js";
 
 const forward: Input = { side: 0, forward: 1, yaw: 0, pitch: 0 };
 const idle: Input = { ...forward, forward: 0 };
@@ -24,7 +25,7 @@ function close(actual: number, expected: number) {
 
 test("delayed acknowledgements never reverse predicted walking or restart it after release", () => {
   const server = player();
-  const motion = new LocalMotion(server);
+  const motion = new LocalMotion(officeWorld, server);
   const history = [{ ...server }];
   let previousZ = server.z;
   let next = 1;
@@ -58,7 +59,7 @@ test("delayed acknowledgements never reverse predicted walking or restart it aft
 
 test("first frame moves before a complete tick and reconnect starts at the server acknowledgement", () => {
   const state = player();
-  const motion = new LocalMotion(state, 87);
+  const motion = new LocalMotion(officeWorld, state, 87);
   motion.advance(forward, STEP_SECONDS / 2);
   close(motion.pose(forward).z, state.z - 4.6 * STEP_SECONDS / 2);
   assert.equal(motion.takeBatch(), undefined);
@@ -102,7 +103,7 @@ test("remote players move between unevenly delivered snapshots and the playhead 
 
 test("releasing WASD partway through a tick at 144 Hz never moves the camera backward", () => {
   const start = player();
-  const motion = new LocalMotion(start);
+  const motion = new LocalMotion(officeWorld, start);
   let lastZ = start.z;
   for (let frame = 1; frame <= 24; frame++) {
     const input = frame <= 3 ? forward : idle;
@@ -116,7 +117,7 @@ test("releasing WASD partway through a tick at 144 Hz never moves the camera bac
 
 test("holding WASD against a boundary does not alternate between two camera positions", () => {
   const start = { ...player(), z: -43.96 };
-  const motion = new LocalMotion(start);
+  const motion = new LocalMotion(officeWorld, start);
   for (let frame = 0; frame < 60; frame++) {
     motion.advance(forward, 1 / 144);
     close(motion.pose(forward).z, start.z);
@@ -142,7 +143,7 @@ test("a burst of old snapshots after a stalled tab does not add a second of play
 
 test("a WASD tap entirely between slow frames is simulated and transmitted once", () => {
   const state = player();
-  const motion = new LocalMotion(state);
+  const motion = new LocalMotion(officeWorld, state);
   motion.resetClock(0);
   // First render at 0 ms, next one at 150 ms. Commit elapsed time under
   // the previous controls before changing them at the actual event time.

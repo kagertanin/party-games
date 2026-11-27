@@ -1,19 +1,15 @@
 import { Room, type Client } from "@colyseus/core";
 import { randomBytes } from "node:crypto";
 import {
-  office,
-  models,
   copyRange,
   rad,
-  fits,
-  hiderColliders,
-  target,
-  walk,
   type Player,
   type Input,
   type Phase,
   type Snapshot,
 } from "../shared/hide/world.js";
+import { isMapId, type MapId } from "../shared/hide/maps.js";
+import { roomWorld, roundSpawn } from "./hide-worlds.js";
 import { shotPath } from "../shared/hide/shot.js";
 import { MAX_BATCH_STEPS, STEP_SECONDS } from "../shared/hide/movement.js";
 
@@ -46,6 +42,9 @@ export class HideRoom extends Room {
   private inputs = new Map<string, Input>();
   private streams = new Map<string, InputStream>();
   private shotAt = new Map<string, number>();
+  private tauntAt = new Map<string, number>();
+  private mapId: MapId = "office";
+  private world = roomWorld(this.mapId);
   private settings = { ...defaultHideSettings };
   private history: { at: number; players: Player[] }[] = [];
   private phase: Phase = "lobby";
@@ -61,6 +60,12 @@ export class HideRoom extends Room {
     this.roomId = code;
     activeCodes.add(code);
     this.onMessage("sync", (c) => this.sendView(c));
+    this.onMessage("map", (client, choice) => {
+      if (this.phase !== "lobby" || client.sessionId !== this.host || !isMapId(choice?.id)) return;
+      this.mapId = choice.id;
+      this.world = roomWorld(this.mapId);
+      this.publish();
+    });
     this.onMessage("settings", (client, change) => {
       if (this.phase !== "lobby" || client.sessionId !== this.host) return;
       const key = change?.key;
@@ -87,14 +92,14 @@ export class HideRoom extends Room {
       void this.lock();
       let hunters = 0,
         hiders = 0;
+      const placed: Player[] = [];
       for (const p of all) {
-        const spots = p.hunter ? office.spawns.hunters : office.spawns.props;
         const i = p.hunter ? hunters++ : hiders++;
-        const spawn = spots[i % spots.length];
+        const spawn = roundSpawn(this.world, { ...p, form: "", y: 0 }, i, placed);
         Object.assign(p, {
-          x: spawn.at[0],
+          x: spawn.x,
           y: 0, vy: 0, lastJump: 0,
-          z: spawn.at[2] + Math.floor(i / spots.length) * 0.9,
+          z: spawn.z,
           yaw: spawn.yaw * rad,
           pitch: 0,
           facing: 0,
@@ -103,11 +108,13 @@ export class HideRoom extends Room {
           foundAt: 0,
           ammo: this.settings.shotsPerHunter,
         });
+        placed.push(p);
         this.inputs.set(p.id, { ...idle(), yaw: p.yaw });
         this.streams.set(p.id, inputStream());
       }
       this.history = [];
       this.shotAt.clear();
+      this.tauntAt.clear();
       this.phase = "hide";
       this.until = Date.now() + this.settings.hideSeconds * 1000;
       this.publish();
@@ -132,6 +139,17 @@ export class HideRoom extends Room {
       const input = readInput(v);
       if (!p || !this.active(p) || !input || this.streams.get(p.id)?.received) return;
       this.inputs.set(p.id, input);
+    });
+    this.onMessage("taunt", (c) => {
+      const p = this.players.get(c.sessionId);
+      const now = Date.now();
+      if (!p || p.hunter || !this.active(p) || now - (this.tauntAt.get(p.id) ?? 0) < 2500) return;
+      this.tauntAt.set(p.id, now);
+      const location = [p.x, this.world.eye(p), p.z];
+      for (const listener of this.clients) {
+        if (this.phase === "hunt" || !this.players.get(listener.sessionId)?.hunter)
+          listener.send("taunt", location);
+      }
     });
     this.onMessage("move", (c, batch) => {
       const p = this.players.get(c.sessionId);
@@ -170,10 +188,10 @@ export class HideRoom extends Room {
         const past = [...this.history]
           .reverse()
           .find((h) => h.at <= at)?.players;
-        const ray = target(p, past ?? [...this.players.values()]);
+        const ray = this.world.target(p, past ?? [...this.players.values()]);
         const hit = this.players.get(ray.id);
         const found = Boolean(hit?.alive);
-        const wrongProp = ray.prop >= 0 && models[office.props[ray.prop].id].disguise;
+        const wrongProp = ray.prop >= 0 && this.world.models[this.world.level.props[ray.prop].id].disguise;
         let feedback = "Промах";
         if (hit && found) {
           hit.alive = false;
@@ -183,16 +201,18 @@ export class HideRoom extends Room {
           p.ammo--;
           feedback = "Обычный предмет · −1 жизнь";
         }
-        this.broadcast("shot", shotPath(p, ray.distance, found ? ray.id : ""));
+        const shot = shotPath(p, ray.distance, found ? ray.id : "", this.world.eye(p));
+        if (wrongProp) shot.penalty = true;
+        this.broadcast("shot", shot);
         c.send("feedback", feedback);
         this.checkEnd();
       } else {
-        const t = target(p, [], copyRange);
+        const t = this.world.target(p, [], copyRange);
         if (t.prop < 0)
           return c.send("feedback", "Подойдите и наведитесь на предмет");
-        const prop = office.props[t.prop];
+        const prop = this.world.level.props[t.prop];
         const next = { ...p, form: prop.id, facing: (prop.yaw ?? 0) * rad };
-        if (!models[prop.id].disguise || !fits(next, p.x, p.z, hiderColliders(next, this.players.values())))
+        if (!this.world.models[prop.id].disguise || !this.world.fits(next, p.x, p.z, this.world.hiderColliders(next, this.players.values())))
           return c.send("feedback", "Для этого облика нужно другое место");
         Object.assign(p, next);
         c.send("feedback", "Облик скопирован");
@@ -290,7 +310,7 @@ export class HideRoom extends Room {
     }
     for (const p of this.players.values()) {
       // Earlier movers already occupy their new positions for this server tick.
-      const colliders = hiderColliders(p, this.players.values());
+      const colliders = this.world.hiderColliders(p, this.players.values());
       if (this.active(p)) {
         const stream = this.streams.get(p.id)!;
         // Budget steps from elapsed SERVER time. Jitter may spend a small
@@ -299,7 +319,7 @@ export class HideRoom extends Room {
         if (stream.received) {
           const count = Math.min(stream.queue.length, Math.floor(stream.credit + 1e-8));
           for (const input of stream.queue.splice(0, count)) {
-            walk(p, input, STEP_SECONDS, colliders);
+            this.world.walk(p, input, STEP_SECONDS, colliders);
             this.inputs.set(p.id, input);
           }
           stream.credit = Math.max(0, stream.credit - count);
@@ -307,12 +327,12 @@ export class HideRoom extends Room {
           // A suspended tab stops producing inputs. Keep gravity authoritative
           // without extrapolating the player's last WASD or jump press.
           if (!count && ((p.y ?? 0) > 0 || p.vy) && now - stream.lastBatchAt > 250)
-            walk(p, { ...idle(), yaw: p.yaw, pitch: p.pitch }, dt, colliders);
+            this.world.walk(p, { ...idle(), yaw: p.yaw, pitch: p.pitch }, dt, colliders);
         } else {
-          walk(p, this.inputs.get(p.id)!, dt, colliders);
+          this.world.walk(p, this.inputs.get(p.id)!, dt, colliders);
         }
       } else if (!p.online && p.alive && (p.y ?? 0) > 0 && (this.phase === "hide" || this.phase === "hunt")) {
-        walk(p, { ...idle(), yaw: p.yaw, pitch: p.pitch }, dt, colliders);
+        this.world.walk(p, { ...idle(), yaw: p.yaw, pitch: p.pitch }, dt, colliders);
       }
     }
     this.history.push({
@@ -328,6 +348,7 @@ export class HideRoom extends Room {
       this.phase === "hide" && this.players.get(c.sessionId)?.hunter;
     const view: Snapshot = {
       settings: this.settings,
+      mapId: this.mapId,
       ack: this.streams.get(c.sessionId)?.ack ?? 0,
       phase: this.phase,
       host: this.host,

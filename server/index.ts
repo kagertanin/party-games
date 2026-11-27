@@ -170,12 +170,16 @@ export async function startServer(port = Number(process.env.PORT || 2567)) {
         res.end();
         return;
       }
-      const body = await readFile(file);
       const contentType = staticMime[extname(file)] || "application/octet-stream";
       const fingerprinted = /^\/assets\/[^/]+-[\w-]{8}\.[\w]+$/.test(pathname);
+      const modelPack = fingerprinted && file.endsWith(".bin");
+      const gzipAccepted = acceptsGzip(req.headers["accept-encoding"]);
+      const precompressed = modelPack && gzipAccepted;
+      const body = await readFile(precompressed ? file + ".gz" : file);
       // The gzip and identity responses represent the same content.
-      const etag = `W/"${createHash("sha256").update(body).digest("base64url")}"`;
-      const compressible = contentType.startsWith("text/") && body.length >= 1024;
+      const tag = modelPack ? pathname : createHash("sha256").update(body).digest("base64url");
+      const etag = `W/"${tag}"`;
+      const compressible = modelPack || (contentType.startsWith("text/") && body.length >= 1024);
       const headers: Record<string, string | number> = {
         "Cache-Control": fingerprinted ? "public, max-age=31536000, immutable" : "no-cache",
         ETag: etag,
@@ -191,8 +195,8 @@ export async function startServer(port = Number(process.env.PORT || 2567)) {
         return;
       }
       headers["Content-Type"] = contentType;
-      const useGzip = compressible && acceptsGzip(req.headers["accept-encoding"]);
-      const responseBody = useGzip ? await gzipAsync(body) : body;
+      const useGzip = compressible && gzipAccepted;
+      const responseBody = useGzip && !precompressed ? await gzipAsync(body) : body;
       if (useGzip) headers["Content-Encoding"] = "gzip";
       headers["Content-Length"] = responseBody.length;
       res.writeHead(200, headers);

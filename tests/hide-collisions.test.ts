@@ -1,3 +1,4 @@
+import { officeWorld } from "./fixtures/hide-office.js";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { setTimeout as wait } from "node:timers/promises";
@@ -5,7 +6,7 @@ import { matchMaker } from "@colyseus/core";
 import { Client, type Room } from "colyseus.js";
 import { startServer } from "../server/index.js";
 import { STEP_SECONDS } from "../shared/hide/movement.js";
-import { eye, fits, hiderColliders, models, walk, type Player, type Snapshot } from "../shared/hide/world.js";
+import { eye, fits, hiderColliders, models, walk, type Player, type Snapshot } from "./fixtures/hide-office.js";
 import { LocalMotion } from "../src/hide/motion.js";
 
 const idle = { side: 0, forward: 0, yaw: 0, pitch: 0 };
@@ -20,7 +21,7 @@ test("two chairs stop side by side even under delayed server acknowledgements", 
   const mover = chair("mover", -2);
   const other = chair("other", 0);
   const peers = [mover, other];
-  const prediction = new LocalMotion(mover, 0, peers);
+  const prediction = new LocalMotion(officeWorld, mover, 0, peers);
   const states = [{ ...mover }];
   for (let tick = 1; tick <= 90; tick++) {
     walk(mover, right, STEP_SECONDS, hiderColliders(mover, peers));
@@ -58,7 +59,7 @@ test("a jumping chair lands on the other chair and falls after its support walks
 
 test("a correction does not visually slide back through a newly arrived chair", () => {
   const mover = chair("mover", -1.2);
-  const prediction = new LocalMotion(mover);
+  const prediction = new LocalMotion(officeWorld, mover);
   prediction.advance(right, 6 * STEP_SECONDS);
   prediction.takeBatch();
   assert.ok(prediction.pose(right).x > -1);

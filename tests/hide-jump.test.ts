@@ -1,6 +1,7 @@
+import { officeWorld } from "./fixtures/hide-office.js";
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { walk, eye, target, models, cameraDistance, type Player, type Input } from "../shared/hide/world.js";
+import { walk, eye, target, models, cameraDistance, type Player, type Input } from "./fixtures/hide-office.js";
 import { STEP_SECONDS } from "../shared/hide/movement.js";
 import { LocalMotion } from "../src/hide/motion.js";
 
@@ -26,7 +27,7 @@ test("holding space produces one modest jump, and hunters stay grounded", () => 
 
 test("a bottle chains jumps to land on a real desk, then walks off and falls", () => {
   const p = { ...player(-1.55, -9.45), form: "food_soda_bottle" };
-  const prediction = new LocalMotion(p);
+  const prediction = new LocalMotion(officeWorld, p);
   const history = [{ ...p }];
   for (let tick = 1; tick <= 100; tick++) {
     const input = { ...idle, jump: tick < 19 ? 1 : 2, forward: tick >= 21 && tick <= 41 ? 1 : 0 };
