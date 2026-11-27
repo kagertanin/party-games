@@ -8,6 +8,9 @@ import { gzip } from "node:zlib";
 import { Room, Server, type Client } from "@colyseus/core";
 import { WebSocketTransport } from "@colyseus/ws-transport";
 import { SURVEY_ROOM } from "../shared/survey-online.js";
+import { DrawRoom } from "./draw-room.js";
+import { drawImageRequest } from "./draw-images.js";
+import { DRAW_ROOM } from "../shared/draw.js";
 import { SurveyRoom } from "./survey-room.js";
 import {
   act,
@@ -146,6 +149,7 @@ export class HatRoom extends Room {
 export async function startServer(port = Number(process.env.PORT || 2567)) {
   const root = resolve("dist");
   const http = createServer(async (req, res) => {
+    if (req.url?.startsWith("/draw-") && await drawImageRequest(req, res)) return;
     if (req.url === "/health") {
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end('{"ok":true}');
@@ -199,6 +203,7 @@ export async function startServer(port = Number(process.env.PORT || 2567)) {
   const server = new Server({
     transport: new WebSocketTransport({ server: http, maxPayload: 16_384 }),
   });
+  server.define(DRAW_ROOM, DrawRoom);
   server.define("hat", HatRoom);
   server.define(SURVEY_ROOM, SurveyRoom);
   await server.listen(port, "0.0.0.0");

@@ -80,3 +80,5 @@ a.game-patch:focus-visible {
     object-fit: contain;
   }
 }
+.draw-patch { position: relative; }
+.draw-patch span { position:absolute; right:10%; bottom:15%; background:#ffda81; color:#282052; padding:.35em .85em; font:700 clamp(.8rem,1.4vw,1.5rem) system-ui; border-radius:.2em; box-shadow:1px 2px 0 #3d315d; transform:rotate(-4deg); }

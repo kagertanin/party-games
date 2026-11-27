@@ -1,0 +1,286 @@
+@import "../base.css";
+body:has(.risovach) {
+  background: #eee8fa;
+  color: #302354;
+}
+.risovach {
+  max-width: 1240px;
+  margin: auto;
+  padding: clamp(16px, 4vw, 60px);
+  font-family: "Rubik Variable", sans-serif;
+}
+.risovach header,
+.draw-bar,
+.draw-tools {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+.risovach header {
+  padding-bottom: 1.3rem;
+  border-bottom: 2px dashed #b5a6c8;
+  margin-bottom: clamp(20px, 4vw, 46px);
+}
+.draw-brand {
+  font-weight: 850;
+  font-size: 1.7rem;
+  text-decoration: none;
+  color: #251c54;
+  letter-spacing: -0.09em;
+}
+.risovach header span {
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+.risovach header button {
+  margin-left: auto;
+}
+.risovach button,
+.risovach input {
+  font: inherit;
+}
+.risovach button {
+  border: 1px solid #b3a3ba;
+  border-radius: 7px;
+  background: #fff9ef;
+  padding: 0.62em 0.9em;
+  line-height: 1.25;
+}
+.risovach button:focus-visible,
+.risovach input:focus-visible {
+  outline: 3px solid #76559f;
+  outline-offset: 2px;
+}
+.risovach button:not(:disabled):hover {
+  border-color: #372459;
+}
+.risovach button.primary {
+  background: #34225c;
+  color: white;
+  font-weight: 650;
+  border-color: #34225c;
+  padding: 0.8em 1.4em;
+  margin-top: 1rem;
+}
+.risovach button[aria-pressed="true"] {
+  background: #e2d4f3;
+  color: #30204a;
+  border-color: #564074;
+}
+.risovach h1 {
+  color: #2a1e52;
+  font-size: clamp(1.65rem, 3.7vw, 3.1rem);
+  font-weight: 780;
+  letter-spacing: -0.055em;
+  margin: 0 0 1rem;
+  overflow-wrap: anywhere;
+}
+.risovach p {
+  line-height: 1.55;
+  margin: 0.65rem 0 1.1rem;
+}
+.risovach small {
+  font-size: 0.9rem;
+}
+.draw-panel,
+.draw-sheet {
+  background: #fff9eb url("../survey/art/weave.webp") repeat;
+  background-blend-mode: soft-light;
+  background-size: 180px;
+  border: 2px dashed #c3af98;
+  border-radius: 5px 13px 8px 12px;
+  box-shadow: 3px 5px 0 #cbbfd6;
+  padding: clamp(18px, 3vw, 38px);
+  min-width: 0;
+}
+.draw-intro,
+.draw-spread {
+  display: grid;
+  gap: clamp(16px, 3vw, 42px);
+  align-items: start;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+.draw-intro {
+  grid-template-columns: minmax(180px, 0.75fr) minmax(0, 1.25fr);
+  align-items: center;
+}
+.draw-hero-art {
+  width: min(100%, 310px);
+  aspect-ratio: 1/1;
+  margin: auto;
+  background-image: url("../home-art/draw.webp");
+  background-size: 109% auto;
+  background-position: 50% 52%;
+  border-radius: 43% 55% 46% 50%;
+  box-shadow: 4px 5px #ccc0d5;
+}
+.draw-tabs {
+  display: flex;
+  gap: 0.5rem;
+  margin: 1.2rem 0;
+}
+.risovach form label {
+  display: grid;
+  gap: 0.35rem;
+  font-weight: 600;
+  margin: 0.7rem 0;
+}
+.risovach input:not([type="color"], [type="range"]) {
+  background: white;
+  padding: 0.7rem;
+  border: 1px solid #a398a9;
+  border-radius: 6px;
+  color: inherit;
+  max-width: 100%;
+  width: 100%;
+}
+.draw-notice:not(:empty) {
+  padding: 0.7rem;
+  background: #fff0bc;
+  margin-bottom: 1rem;
+}
+.draw-bar {
+  margin: 0.4rem 0 1rem;
+}
+.draw-clock {
+  font-variant-numeric: tabular-nums;
+  background: #302354;
+  color: white;
+  border-radius: 2rem;
+  padding: 0.4em 0.9em;
+  margin-left: auto;
+}
+.lobby,
+.studio {
+  max-width: 780px;
+  margin: auto;
+}
+.lobby > small {
+  display: block;
+  margin-top: 0.6rem;
+}
+.draw-code {
+  font-size: 1.4rem !important;
+  font-weight: 700 !important;
+}
+.roster {
+  display: flex;
+  flex-wrap: wrap;
+  list-style: none;
+  gap: 0.5rem;
+  padding: 0;
+}
+.roster li {
+  padding: 0.5rem 0.8rem;
+  border: 1px dashed #a1908f;
+  border-radius: 4px;
+  background: #fffdfa;
+}
+.draw-tools {
+  gap: 0.6rem;
+  margin: 0.5rem 0 0.8rem;
+}
+.draw-tools label {
+  display: inline-flex;
+  gap: 0.4rem;
+  align-items: center;
+}
+.draw-tools input[type="range"] {
+  width: 6rem;
+}
+.draw-tools input[type="color"] {
+  width: 2.5rem;
+}
+.drawing-pad canvas,
+.draw-picture {
+  width: 100%;
+  max-width: 640px;
+  display: block;
+  aspect-ratio: 4/3;
+  background: white;
+  border-radius: 3px;
+  box-shadow: 0 0 0 1px #c9bdca;
+  object-fit: contain;
+}
+.drawing-pad canvas {
+  touch-action: none;
+  cursor: crosshair;
+}
+.blank {
+  display: grid;
+  place-items: center;
+  color: #706479;
+}
+.draw-sheet {
+  padding: 12px;
+  position: sticky;
+  top: 1rem;
+}
+.draw-options {
+  display: grid;
+  gap: 0.45rem;
+}
+.draw-options > div {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.35rem;
+}
+.draw-options button:first-child {
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+.draw-options button:disabled {
+  opacity: 0.7;
+}
+.draw-options [data-heart] {
+  color: #962f63;
+}
+.score-list,
+.reveal-list {
+  padding: 0;
+  list-style: none;
+}
+.score-list li {
+  display: flex;
+  justify-content: space-between;
+}
+.score-list li,
+.reveal-list li {
+  border-bottom: 1px dashed #c5b4c3;
+  padding: 0.45rem 0;
+  overflow-wrap: anywhere;
+}
+.reveal-list small {
+  display: block;
+}
+@media (max-width: 680px) {
+  .draw-spread,
+  .draw-intro {
+    grid-template-columns: 1fr;
+  }
+  .draw-sheet {
+    position: static;
+  }
+  .draw-hero-art {
+    width: 104px;
+  }
+  .draw-intro {
+    gap: 0.7rem;
+  }
+  .draw-tabs button {
+    flex: 1;
+  }
+  .risovach header {
+    margin-bottom: 1rem;
+  }
+  .draw-picture {
+    max-height: 37vh;
+  }
+  .draw-tools {
+    gap: 0.4rem;
+  }
+  .draw-tools button {
+    padding: 0.5em;
+  }
+}
