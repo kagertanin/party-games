@@ -9,7 +9,16 @@ export const SURVEY_MIN_TEAM_SIZE = SURVEY_TEAM_SIZES[0];
 export const SURVEY_MAX_TEAM_SIZE = SURVEY_TEAM_SIZES[3];
 export const SURVEY_DEFAULT_TEAM_CAPACITY = 4;
 export const SURVEY_RESOLUTION_MS = 2_000;
+export const SURVEY_PACK_IDS = ["classic", "adult"] as const;
 
+export type SurveyPackId = typeof SURVEY_PACK_IDS[number];
+export type SurveyPackPreview = {
+  id: SurveyPackId;
+  name: string;
+  prompts: string[];
+  categories?: readonly string[];
+  scoring: "survey" | "editorial";
+};
 export type SurveyMember = { id: string; name: string; connected: boolean };
 export type SurveyTeamView = {
   name: string;
@@ -54,6 +63,8 @@ export type SurveyRoomView = {
   teamCount: number;
   teamSize: number;
   teams: SurveyTeamView[];
+  questionPack: SurveyPackId;
+  questionPacks?: SurveyPackPreview[];
   unassigned: SurveyMember[];
   serverNow: number;
   match: SurveyMatchView | null;
@@ -76,6 +87,7 @@ export type SurveyOnlineAction =
   | { type: "move-player"; memberId: string; team: number; seat: number }
   | { type: "kick-player"; memberId: string }
   | { type: "shuffle-teams" }
+  | { type: "select-pack"; packId: SurveyPackId }
   | ({ phaseId: number } & (
       | { type: "question"; id: number }
       | { type: "ready" }

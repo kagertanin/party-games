@@ -2,8 +2,8 @@ import "./demo.css";
 import gamesLogo from "../home-art/logo.webp";
 import surveyTitlePatch from "./art/survey-title.webp";
 import beachPatch from "./art/beach.webp";
-import { MAX_ROUNDS, MAX_SURVEY_PLAYERS, MIN_SURVEY_PLAYERS, SurveyGame, TurnReadiness, type TurnResult } from "./survey";
-import { demoGuesses, questions } from "./questions";
+import { MAX_ROUNDS, MAX_SURVEY_PLAYERS, MIN_SURVEY_PLAYERS, SurveyGame, TurnReadiness, type Question, type TurnResult } from "./survey";
+import { QuestionDeck } from "./question-deck";
 import { renderTurnSpiral } from "./turn-spiral";
 import { renderFruit } from "./fruit-icons";
 import { animateTurnResult } from "./turn-animation";
@@ -38,7 +38,9 @@ export function mountSurveyDemo(app: HTMLElement) {
   let questionVoter = 0;
   let questionBallot: QuestionBallot | null = null;
   let changingQuestion = false;
-  const usedQuestions = new Set<number>();
+  let demoQuestions: readonly Question[] = [];
+  let demoExamples: readonly (readonly string[])[] = [];
+  let demoDeck: QuestionDeck | undefined;
   let deadline = 0;
   let votingOnly = false;
   let draft = "";
@@ -182,7 +184,7 @@ export function mountSurveyDemo(app: HTMLElement) {
       </div>
       <div class="survey-ballot-choices">
         ${ballot.candidateIds.map((id) => `<button class="survey-question-option" data-question-id="${id}" aria-pressed="${ballot.votes.get(questionVoter) === id}">
-          <span class="survey-question-option-text">${escape(questions[id].prompt)}</span>
+          <span class="survey-question-option-text">${escape(demoQuestions[id].prompt)}</span>
           <span class="survey-question-votes" aria-label="Голосов: ${ballot.count(id)}">${ballot.count(id)}</span>
         </button>`).join("")}
       </div>
@@ -369,7 +371,7 @@ export function mountSurveyDemo(app: HTMLElement) {
         <h1 id="survey-title"><img src="${surveyTitlePatch}" alt="Сто к одному" width="755" height="134"></h1>
         <p class="survey-player-range">${MIN_SURVEY_PLAYERS}–${MAX_SURVEY_PLAYERS} игроков</p>
         <p class="survey-team-limit">До 3 команд, до 5 в каждой</p>
-        <p class="survey-lead">Угадайте самые популярные ответы из опроса.</p>
+        <p class="survey-lead">Угадайте ответы на табло и заработайте очки.</p>
         <div class="survey-start">
           <button class="survey-button primary-action" data-survey="setup" type="button">Играть</button>
           <button class="survey-button secondary-action" data-survey="demo" type="button">Демо</button>
@@ -517,21 +519,37 @@ export function mountSurveyDemo(app: HTMLElement) {
   }
 
   function startQuestionBallot() {
-    const candidates = questions.map((_, id) => id).filter((id) => !usedQuestions.has(id)).slice(0, 3);
-    questionBallot = new QuestionBallot(candidates, playerCount, performance.now());
+    demoDeck ??= new QuestionDeck(demoQuestions.length);
+    questionBallot = new QuestionBallot(demoDeck.draw(), playerCount, performance.now());
     questionVoter = 0;
     render();
     app.querySelector<HTMLElement>("#survey-ballot-title")?.focus({preventScroll: true});
   }
 
   function startMatch(size: number, demo: boolean, teamCount?: number) {
-    game = new SurveyGame(questions, size, Math.random, QUESTIONS_PER_MATCH, teamCount);
+    game = new SurveyGame(demoQuestions, size, Math.random, QUESTIONS_PER_MATCH, teamCount);
     playerCount = size;
     isDemo = demo;
     viewingTeam = demo ? 0 : null;
     expandedTeam = 0;
-    usedQuestions.clear();
     startQuestionBallot();
+  }
+
+  async function startDemo(button: HTMLButtonElement) {
+    button.disabled = true;
+    app.querySelector("[data-demo-error]")?.remove();
+    try {
+      const { classicQuestions, classicDemoExamples } = await import("./classic-questions");
+      if (lobby.view || !button.isConnected || app.querySelector("dialog[open]")) return;
+      demoQuestions = classicQuestions;
+      demoExamples = classicDemoExamples;
+      startMatch(DEMO_PLAYER_COUNT, true);
+    } catch {
+      button.parentElement?.insertAdjacentHTML("afterend",
+        '<p class="survey-error" data-demo-error role="status">Не удалось загрузить демо. Попробуйте ещё раз.</p>');
+    } finally {
+      button.disabled = false;
+    }
   }
 
   async function closeQuestionBallot(now: number) {
@@ -543,7 +561,6 @@ export function mountSurveyDemo(app: HTMLElement) {
     try {
       await animateQuestionChoice(app, winner, () => {
         match.selectQuestion(winner);
-        usedQuestions.add(winner);
         questionBallot = null;
         render();
       });
@@ -742,7 +759,7 @@ export function mountSurveyDemo(app: HTMLElement) {
   }
 
   function addExamples(match: SurveyGame) {
-    const examples = demoGuesses[match.questionId];
+    const examples = demoExamples[match.questionId] ?? match.question.answers.map(({ label }) => label);
     match.teams[match.activeTeam].players.forEach((_, index) => {
       if (index === player || match.hasProposed(index)) return;
       const guess = examples[(match.turnIndex + index + examples.length - player - 1) % examples.length];
@@ -830,7 +847,7 @@ export function mountSurveyDemo(app: HTMLElement) {
     if (!game) {
       if (lobby.view) return;
       if (action === "setup") lobby.open();
-      if (action === "demo") startMatch(DEMO_PLAYER_COUNT, true);
+      if (action === "demo") void startDemo(button);
       return;
     }
     if (resolving || changingQuestion) return;

@@ -5,6 +5,7 @@ import {
   SURVEY_KICKED_CODE,
   SURVEY_MAX_TEAM_SIZE,
   SURVEY_MIN_TEAM_SIZE,
+  SURVEY_PACK_IDS,
   SURVEY_RESOLUTION_MS,
   SURVEY_TEAM_COUNTS,
   SURVEY_TEAM_SIZES,
@@ -12,6 +13,8 @@ import {
   type SurveyMatchView,
   type SurveyMember,
   type SurveyOnlineAction,
+  type SurveyPackId,
+  type SurveyPackPreview,
   type SurveyRoomView,
 } from "../shared/survey-online.js";
 import {
@@ -19,13 +22,23 @@ import {
   QUESTION_BALLOT_MS,
   QUESTIONS_PER_MATCH,
 } from "../src/survey/question-ballot.js";
-import { questions } from "../src/survey/questions.js";
-import { SurveyGame, SURVEY_TEAM_NAMES, TurnReadiness, type TurnResult } from "../src/survey/survey.js";
+import { questionPacks, QuestionDeck } from "../src/survey/question-packs.js";
+import { SurveyGame, SURVEY_TEAM_NAMES, TurnReadiness, type Question, type TurnResult } from "../src/survey/survey.js";
 import { getTurnTiming, READINESS_MS } from "../src/survey/turn-timing.js";
 
 const activeCodes = new Set<string>();
 const RECONNECT_SECONDS = 90;
 const KICKED_MESSAGE = "Ведущий исключил вас из комнаты.";
+const packPreviews: SurveyPackPreview[] = SURVEY_PACK_IDS.map((id) => {
+  const { name, questions, questionCategories, scoring } = questionPacks[id];
+  return {
+    id,
+    name,
+    scoring,
+    prompts: questions.map(({ prompt }) => prompt),
+    ...(questionCategories ? { categories: questionCategories } : {}),
+  };
+});
 
 type Stage =
   | { phase: "ballot"; deadline: number; ballot: QuestionBallot }
@@ -35,7 +48,13 @@ type Stage =
   | { phase: "reveal" | "results"; deadline: 0 };
 
 type LobbyTeam = { fruitIndex: number; seats: (SurveyMember | null)[] };
-type Match = { game: SurveyGame; stage: Stage; usedQuestions: Set<number>; roster: SurveyMember[][] };
+type Match = {
+  game: SurveyGame;
+  stage: Stage;
+  questions: readonly Question[];
+  deck: QuestionDeck;
+  roster: SurveyMember[][];
+};
 
 function playerName(value: unknown): string {
   const name = typeof value === "string" ? value.trim().replace(/\s+/g, " ") : "";
@@ -66,6 +85,8 @@ export class SurveyRoom extends Room {
   private teams: LobbyTeam[] = [];
   private readonly members = new Map<string, SurveyMember>();
   private readonly reconnections = new Map<string, ReturnType<Room["allowReconnection"]>>();
+  private readonly questionDecks = new Map<SurveyPackId, QuestionDeck>();
+  private questionPack: SurveyPackId = "classic";
   private owner = "";
   private phaseId = 0;
   private match: Match | undefined;
@@ -174,9 +195,9 @@ export class SurveyRoom extends Room {
     const match = this.match;
     if (!("phaseId" in action)) {
       if (match) {
-        throw new Error(action.type === "start"
-          ? "Партия уже началась."
-          : "Менять команды можно только в комнате ожидания.");
+        if (action.type === "start") throw new Error("Партия уже началась.");
+        if (action.type === "select-pack") throw new Error("Набор вопросов можно менять только в комнате ожидания.");
+        throw new Error("Менять команды можно только в комнате ожидания.");
       }
       this.applyLobbyAction(member, action, now);
       return;
@@ -207,7 +228,7 @@ export class SurveyRoom extends Room {
       game.nextQuestion();
       this.setStage(match, game.phase === "results"
         ? { phase: "results", deadline: 0 }
-        : this.questionStage(match.usedQuestions, match.roster.flat().length, now));
+        : this.questionStage(match.deck, match.roster.flat().length, now));
     } else if (action.type === "replay" && stage.phase === "results") {
       this.requireOwner(actor);
       this.match = undefined;
@@ -245,6 +266,10 @@ export class SurveyRoom extends Room {
       case "shuffle-teams":
         this.shuffleTeams();
         return;
+      case "select-pack":
+        if (!SURVEY_PACK_IDS.includes(action.packId)) throw new Error("Такого набора вопросов нет.");
+        this.questionPack = action.packId;
+        return;
       case "start":
         this.startMatch(now);
         return;
@@ -270,10 +295,15 @@ export class SurveyRoom extends Room {
     // Reserved seats stay in the lobby. Returning players outside this roster can watch the match.
     const roster = lobbyRoster.map((team) => team.filter(({ connected }) => connected));
     const playerCount = roster.flat().length;
+    const { questions } = questionPacks[this.questionPack];
     const game = new SurveyGame(questions, playerCount, Math.random, QUESTIONS_PER_MATCH,
       this.teams.length, roster.map((team) => team.map(({ name }) => name)));
-    const usedQuestions = new Set<number>();
-    this.match = { game, roster, usedQuestions, stage: this.questionStage(usedQuestions, playerCount, now) };
+    let deck = this.questionDecks.get(this.questionPack);
+    if (!deck) {
+      deck = new QuestionDeck(questions.length);
+      this.questionDecks.set(this.questionPack, deck);
+    }
+    this.match = { game, roster, questions, deck, stage: this.questionStage(deck, playerCount, now) };
     this.phaseId++;
   }
 
@@ -376,7 +406,6 @@ export class SurveyRoom extends Room {
       const selected = stage.ballot.finish(now);
       if (selected === undefined) return false;
       game.selectQuestion(selected);
-      match.usedQuestions.add(selected);
       this.prepareTurn(match, now);
       return true;
     }
@@ -408,12 +437,11 @@ export class SurveyRoom extends Room {
     return false;
   }
 
-  private questionStage(used: Set<number>, playerCount: number, now: number): Stage {
-    const candidates = questions.map((_, id) => id).filter((id) => !used.has(id)).slice(0, 3);
+  private questionStage(deck: QuestionDeck, playerCount: number, now: number): Stage {
     return {
       phase: "ballot",
       deadline: now + QUESTION_BALLOT_MS,
-      ballot: new QuestionBallot(candidates, playerCount, now),
+      ballot: new QuestionBallot(deck.draw(), playerCount, now),
     };
   }
 
@@ -472,6 +500,8 @@ export class SurveyRoom extends Room {
       owner: this.owner,
       teamCount: this.teams.length,
       teamSize: Math.max(...this.teams.map(({ seats }) => seats.length)),
+      questionPack: this.questionPack,
+      ...(!this.match && client.sessionId === this.owner ? { questionPacks: packPreviews } : {}),
       teams: this.teams.map(({ seats, fruitIndex }, index) => ({
         players: roster[index],
         ...(this.match ? {} : { seats }),
@@ -487,7 +517,7 @@ export class SurveyRoom extends Room {
     client.send("view", view);
   }
 
-  private matchView({ game, stage, roster }: Match, actor: string): SurveyMatchView {
+  private matchView({ game, stage, roster, questions }: Match, actor: string): SurveyMatchView {
     const resolution = stage.phase === "resolution" ? stage.result : null;
     const activeTeam = resolution?.team ?? game.activeTeam;
     const stagePlayer = roster[activeTeam].findIndex(({ id }) => id === actor);

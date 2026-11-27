@@ -2,7 +2,7 @@ import "./online-lobby.css";
 import type { Client, Room } from "colyseus.js";
 import {
   SURVEY_CODE, SURVEY_KICKED_CODE, SURVEY_ROOM, SURVEY_TEAM_COUNTS, SURVEY_MIN_TEAM_SIZE, SURVEY_MAX_TEAM_SIZE,
-  canStartSurvey, type SurveyMember, type SurveyOnlineAction, type SurveyRoomView,
+  canStartSurvey, type SurveyMember, type SurveyOnlineAction, type SurveyPackId, type SurveyRoomView,
 } from "../../shared/survey-online";
 import { renderFruit } from "./fruit-icons";
 
@@ -72,6 +72,7 @@ export function createSurveyLobby(app: HTMLElement, onUpdate: () => void) {
   let error = "";
   let notice = "";
   let dialog: HTMLDialogElement | null = null;
+  let packDialog: HTMLDialogElement | null = null;
   let mode: "create" | "join" = "create";
   let managedMember: string | null = null;
   let confirmingKick = false;
@@ -126,6 +127,98 @@ export function createSurveyLobby(app: HTMLElement, onUpdate: () => void) {
     dialog = null;
   }
 
+  function availableQuestionPacks() {
+    return room?.connection.isOpen && !pending && view && view.you === view.owner && !view.match
+      ? view.questionPacks
+      : undefined;
+  }
+
+  function closePackDialog(restoreFocus: boolean) {
+    if (!packDialog) return;
+    packDialog.close();
+    packDialog.remove();
+    packDialog = null;
+    if (restoreFocus) {
+      app.querySelector<HTMLButtonElement>('[data-room-action="question-packs"]')?.focus({ preventScroll: true });
+    }
+  }
+
+  function openPackDialog() {
+    const packs = availableQuestionPacks();
+    const initial = packs?.find(({ id }) => id === view?.questionPack) ?? packs?.[0];
+    if (!packs || !initial || packDialog) return;
+    let selected = initial;
+
+    const element = document.createElement("dialog");
+    element.className = "survey-app survey-start-dialog survey-pack-dialog";
+    element.id = "survey-pack-dialog";
+    element.setAttribute("aria-labelledby", "survey-pack-title");
+    element.innerHTML = `
+      <form class="survey-start-form">
+        <h2 id="survey-pack-title">Выбрать пак вопросов</h2>
+        <div class="survey-online-modes" role="group" aria-label="Наборы вопросов">
+          ${packs.map(({ id, name }) => `<button type="button" class="survey-button secondary-action"
+            data-pack-id="${escape(id)}">${escape(name)}</button>`).join("")}
+        </div>
+        <p class="survey-pack-summary"></p>
+        <div class="survey-pack-questions" tabindex="0" role="region" aria-label="Вопросы набора"></div>
+        <div class="survey-dialog-actions">
+          <button type="button" class="survey-button secondary-action" data-pack-cancel>Отмена</button>
+          <button type="submit" class="survey-button primary-action">Применить</button>
+        </div>
+      </form>`;
+    const tabs = [...element.querySelectorAll<HTMLButtonElement>("[data-pack-id]")];
+    const summary = element.querySelector<HTMLElement>(".survey-pack-summary")!;
+    const questions = element.querySelector<HTMLElement>(".survey-pack-questions")!;
+    const pluralRules = new Intl.PluralRules("ru");
+
+    function previewPack() {
+      for (const tab of tabs) tab.setAttribute("aria-pressed", String(tab.dataset.packId === selected.id));
+      const { prompts, categories, scoring } = selected;
+      const plural = pluralRules.select(prompts.length);
+      const count = `${prompts.length} ${plural === "one" ? "вопрос" : plural === "few" ? "вопроса" : "вопросов"}`;
+      summary.textContent = `${count} · ${scoring === "editorial" ? "Подборка с игровыми очками" : "Очки по ответам опроса"}`;
+      const list = (items: readonly string[]) => `<ul role="list">${items.map((text) => `<li>${escape(text)}</li>`).join("")}</ul>`;
+      if (categories?.length === prompts.length && categories.every(Boolean)) {
+        const groups = new Map<string, string[]>();
+        categories.forEach((category, index) => {
+          const group = groups.get(category);
+          if (group) group.push(prompts[index]);
+          else groups.set(category, [prompts[index]]);
+        });
+        questions.innerHTML = [...groups].map(([category, items]) => `<div class="survey-pack-category">
+          <h3>${escape(category)}</h3>${list(items)}</div>`).join("");
+      } else {
+        questions.innerHTML = list(prompts);
+      }
+      questions.scrollTop = 0;
+    }
+
+    for (const tab of tabs) tab.addEventListener("click", () => {
+      const next = packs.find(({ id }) => id === tab.dataset.packId);
+      if (!next || next === selected) return;
+      selected = next;
+      previewPack();
+    });
+    element.querySelector("[data-pack-cancel]")!.addEventListener("click", () => closePackDialog(true));
+    element.addEventListener("cancel", (event) => {
+      event.preventDefault();
+      closePackDialog(true);
+    });
+    element.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const chosen = availableQuestionPacks()?.find(({ id }) => id === selected.id);
+      closePackDialog(true);
+      if (chosen && chosen.id !== view?.questionPack) send({ type: "select-pack", packId: chosen.id });
+    });
+
+    packDialog = element;
+    previewPack();
+    document.body.append(element);
+    element.showModal();
+    tabs.find((tab) => tab.dataset.packId === selected.id)?.focus({ preventScroll: true });
+  }
+
   function close() {
     removeDialog();
     ++attempt;
@@ -159,6 +252,7 @@ export function createSurveyLobby(app: HTMLElement, onUpdate: () => void) {
   }
 
   function dropRoom() {
+    closePackDialog(false);
     const active = room;
     room = null;
     clearTimeout(waitingForView);
@@ -305,6 +399,7 @@ export function createSurveyLobby(app: HTMLElement, onUpdate: () => void) {
   }
 
   function redrawRoom(focusAction?: string, memberId?: string) {
+    if (packDialog && !availableQuestionPacks()?.length) closePackDialog(false);
     const focused = document.activeElement;
     const previous = focused instanceof HTMLElement && app.contains(focused) ? focused.dataset : undefined;
     onUpdate();
@@ -338,6 +433,7 @@ export function createSurveyLobby(app: HTMLElement, onUpdate: () => void) {
     const { code, teams, teamSize, you, owner } = view;
     const isHost = you === owner;
     const canEdit = !!room && !pending;
+    const activePack: SurveyPackId = view.questionPack ?? "classic";
     const unassigned = view.unassigned ?? [];
     const hasSeatSelection = Array.isArray(view.unassigned);
     const canManage = isHost && canEdit && hasSeatSelection;
@@ -390,6 +486,11 @@ export function createSurveyLobby(app: HTMLElement, onUpdate: () => void) {
         <div class="survey-online-overview">
           <h1 id="survey-online-lobby-title" tabindex="-1">Комната ожидания</h1>
           <p class="survey-muted" role="status">Подключились ${connected} из ${seats}</p>
+          <div class="survey-online-pack">
+            <span class="survey-online-pack-label${activePack === "adult" ? " is-adult" : ""}">Набор <strong>${activePack === "adult" ? "18+" : "Классика"}</strong></span>
+            ${isHost && view.questionPacks?.length ? `<button type="button" class="survey-button secondary-action"
+              data-room-action="question-packs" aria-haspopup="dialog" ${canEdit ? "" : "disabled"}>Выбрать пак вопросов</button>` : ""}
+          </div>
           ${unassigned.length ? `<ul class="survey-online-unassigned" aria-label="Игроки без команды" role="list">
             ${unassigned.map((member) => `<li>${memberMarkup(member)}</li>`).join("")}
           </ul>` : ""}
@@ -497,6 +598,7 @@ export function createSurveyLobby(app: HTMLElement, onUpdate: () => void) {
         updateDialog();
         break;
       case "close": close(); break;
+      case "question-packs": openPackDialog(); break;
       case "start": send({ type: "start" }); break;
       case "add-team": send({ type: "add-team" }); break;
       case "remove-team": send({ type: "remove-team", team: Number(roomTeam) }); break;
